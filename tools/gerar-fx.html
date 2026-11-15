@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  Batalhas FU: effect image generator (development tool, not shipped in the zip).
+  Serve the module folder with any static server, open tools/gerar-fx.html and click "Baixar todas":
+  each design of fx-designs.mjs is rasterised and saved as <name>.webp; put the files in assets/fx.
+  window.__fx (name -> data URL) is also filled for automation.
+-->
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Gerar efeitos</title>
+<style>
+  body { margin: 0; padding: 12px; background: #1b1a20; color: #ddd; font: 13px sans-serif; }
+  .grid { display: flex; flex-wrap: wrap; gap: 10px; }
+  figure { margin: 0; padding: 6px; border-radius: 8px; background: repeating-conic-gradient(#2a2830 0 25%, #222027 0 50%) 0 0 / 16px 16px; }
+  figure img { display: block; height: 150px; }
+  figure.tint img { filter: drop-shadow(0 0 0 #000); }
+  figcaption { margin-top: 4px; text-align: center; }
+  button { margin-bottom: 10px; padding: 6px 12px; }
+</style></head><body>
+<button id="all">Baixar todas</button>
+<div class="grid" id="grid"></div>
+<script type="module">
+  import { FX } from "./fx-designs.mjs";
+  window.__fx = {};
+  for ( const [name, make] of Object.entries(FX) ) {
+    const svg = make();
+    const img = new Image();
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    c.getContext("2d").drawImage(img, 0, 0);
+    const url = c.toDataURL("image/webp", 0.9);
+    window.__fx[name] = url;
+    const fig = document.createElement("figure");
+    const shown = new Image();
+    shown.src = url;
+    fig.append(shown, Object.assign(document.createElement("figcaption"), { textContent: name }));
+    document.getElementById("grid").append(fig);
+  }
+  document.getElementById("all").addEventListener("click", () => {
+    for ( const [name, url] of Object.entries(window.__fx) ) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name}.webp`;
+      a.click();
+    }
+  });
+  window.__done = true;
+</script>
+</body></html>
