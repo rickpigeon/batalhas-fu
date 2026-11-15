@@ -10,11 +10,13 @@ import { MODULE_ID, MODULE_TITLE, SOCKET, isActiveGM, isGM } from "./constants.m
 import { battleFlags, getBattle, isBattleScene, registerSettings, setting } from "./store.mjs";
 import { HUD } from "./hud.mjs";
 import { maybePlayIntro, playIntro } from "./intro.mjs";
-import { backends, hideTurnMarker, playEvent, showTurnMarker } from "./fx.mjs";
+import { applyReactions, backends, hideTurnMarker, playEvent, setTurnMarker } from "./fx.mjs";
 import { playDomFx } from "./fx-dom.mjs";
 import { listenSystem, markCovered, primeWatcher, watchStats } from "./fu-bridge.mjs";
 import { combatInfo, combatOfScene } from "./fu-data.mjs";
 import { BattlePanel, PanelLauncher } from "./panel-app.mjs";
+import { TurnControlApp, autoOpenTurns } from "./turn-app.mjs";
+import { describe, logEvent, receiveLog } from "./log.mjs";
 import { addToBattle, endBattle, replayIntro, startBattle } from "./battle.mjs";
 import { reportError, watchUncaught } from "./errors.mjs";
 
@@ -49,7 +51,11 @@ Hooks.once("ready", () => {
       if ( msg.scope === "gm" ) {
         if ( !isActiveGM() ) return;
         markCovered(msg.event);
-        playEvent(msg.event);
+        applyReactions(msg.event);
+        return;
+      }
+      if ( msg.scope === "log" ) {
+        if ( game.user.isGM ) receiveLog(msg.entry);
         return;
       }
       if ( msg.scope === "dom" ) return playDomFx(msg);
@@ -63,6 +69,8 @@ Hooks.once("ready", () => {
     module.api = {
       /** Open the GM panel (tab: "nova" | "atual" | "fundos" | "efeitos"). */
       open: tab => BattlePanel.open(tab),
+      /** Open the GM turn window. */
+      turns: () => TurnControlApp.open(),
       /** Start a battle from a macro: { setup, party: refs, foes: refs }; refs = {kind:"actor",id} | {kind:"token",uuid}. */
       start: opts => startBattle(opts),
       /** Add combatants to the running battle. */
@@ -97,7 +105,9 @@ Hooks.on("canvasReady", () => {
       primeWatcher();
       markActing();
     }
+    if ( autoOpenTurns() && combatOfScene(canvas.scene) ) TurnControlApp.open();
   }
+  TurnControlApp.refresh();
 });
 
 Hooks.on("updateScene", (scene, changed) => {
@@ -113,15 +123,21 @@ Hooks.on("updateScene", (scene, changed) => {
 /* ---------------------------------------------------------------------------------------------- */
 
 let lastActing = null;
+let actingTimer = null;
+/** Turn marker on the acting token (active GM), after the system's burst of updates settles. */
 function markActing() {
-  if ( !isActiveGM() || !isBattleScene(canvas?.scene) ) return;
-  const info = combatInfo(combatOfScene(canvas.scene));
-  const acting = info?.actingId ? info.combatants.find(c => c.id === info.actingId) : null;
-  const key = acting ? `${acting.id}|${acting.tokenId}` : null;
-  if ( key === lastActing ) return;
-  lastActing = key;
-  if ( acting?.tokenId ) showTurnMarker(acting.tokenId, acting.faction);
-  else hideTurnMarker();
+  if ( !isActiveGM() ) return;
+  clearTimeout(actingTimer);
+  actingTimer = setTimeout(() => {
+    if ( !isBattleScene(canvas?.scene) && !setting("animarFora", true) ) return;
+    const info = combatInfo(combatOfScene(canvas?.scene));
+    const acting = info?.actingId ? info.combatants.find(c => c.id === info.actingId) : null;
+    const key = acting ? `${acting.id}|${acting.tokenId}` : null;
+    if ( key === lastActing ) return;
+    lastActing = key;
+    setTurnMarker(acting?.tokenId ?? null, acting?.faction);
+    if ( acting ) logEvent({ kind: "turno", text: `${acting.name} começou o turno` });
+  }, 180);
 }
 
 function onCombat(doc) {
@@ -129,6 +145,7 @@ function onCombat(doc) {
   try {
     HUD.onCombat(combat);
     markActing();
+    TurnControlApp.refresh();
   } catch ( err ) {
     reportError(err, "combate");
   }
@@ -137,6 +154,7 @@ for ( const hook of ["createCombat", "updateCombat", "createCombatant", "updateC
 Hooks.on("deleteCombat", combat => {
   if ( combat?.scene?.id === canvas?.scene?.id ) {
     HUD.refresh();
+    TurnControlApp.refresh();
     if ( isActiveGM() ) {
       lastActing = null;
       hideTurnMarker();
@@ -149,6 +167,7 @@ Hooks.on("deleteCombat", combat => {
 /* ---------------------------------------------------------------------------------------------- */
 
 function onStats() {
+  TurnControlApp.refresh();
   if ( !isBattleScene(canvas?.scene) ) return;
   HUD.onStats();
   watchStats();
@@ -170,7 +189,7 @@ function onSetting(s) {
 Hooks.on("updateSetting", onSetting);
 Hooks.on("createSetting", onSetting);
 Hooks.on("clientSettingChanged", key => {
-  if ( key === `${MODULE_ID}.ambiente` ) {
+  if ( [`${MODULE_ID}.ambiente`, `${MODULE_ID}.hudEscala`, `${MODULE_ID}.plaquinhas`].includes(key) ) {
     HUD.ambientKey = "";
     HUD.refresh();
   }
@@ -192,6 +211,15 @@ Hooks.on("getSceneControlButtons", controls => {
     button: true,
     visible: true,
     onChange: () => BattlePanel.open()
+  };
+  tokens.tools.batalhasFUTurnos = {
+    name: "batalhasFUTurnos",
+    title: "Turnos da batalha",
+    icon: "fa-solid fa-hourglass-half",
+    order: Object.keys(tokens.tools).length,
+    button: true,
+    visible: true,
+    onChange: () => TurnControlApp.open()
   };
 });
 

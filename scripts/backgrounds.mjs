@@ -711,6 +711,21 @@ function wrap(defs, body) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><defs>${defs}</defs>${body}</svg>`;
 }
 
+/** A transparent layer laid over an image background: time-of-day tint, mana motes and a soft vignette. */
+export function overlaySVG({ time = "dia", mana = "", seed = 1 } = {}) {
+  const r = rng(seed * 4099 + 11);
+  let defs = "";
+  let body = "";
+  if ( time === "entardecer" ) body += `<rect width="${W}" height="${H}" fill="#ff9a5a" opacity=".18"/>`;
+  if ( time === "noite" ) body += `<rect width="${W}" height="${H}" fill="#14204a" opacity=".45"/>`;
+  const m = manaLayer(mana, r, { y0: H * 0.35, y1: H, cy: H * 0.68, ry: H * 0.32 }, 0.8);
+  defs += m.defs;
+  body += m.body;
+  defs += `<radialGradient id="bfVig2" cx="50%" cy="55%" r="75%"><stop offset=".62" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".4"/></radialGradient>`;
+  body += `<rect width="${W}" height="${H}" fill="url(#bfVig2)"/>`;
+  return wrap(defs, body);
+}
+
 /** The background SVG for a battle setup (scale = output pixels per scene pixel). */
 export function backgroundSVG(setup, scale = 1) {
   const svg = setup.layout === "mesa" ? tableSVG(setup) : fieldSVG(setup);

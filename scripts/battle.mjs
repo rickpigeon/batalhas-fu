@@ -18,6 +18,7 @@ import {
   cachedBackground, customBackground, getBattle, normalizeSetup, rememberBackground, setBattle
 } from "./store.mjs";
 import { hideTurnMarker } from "./fx.mjs";
+import { fittedBackground } from "./library.mjs";
 
 const SceneCls = () => foundry.documents?.Scene?.implementation ?? CONFIG.Scene.documentClass;
 const CombatCls = () => foundry.documents?.Combat?.implementation ?? CONFIG.Combat.documentClass;
@@ -51,8 +52,10 @@ async function resolveRef(ref) {
 /* ---------------------------------------------------------------------------------------------- */
 
 export async function backgroundFor(setup, slots, onStatus = () => null) {
+  /* an image picked from the library for this battle, then the biome's own image, then the generated one */
+  if ( setup.bgMode === "biblioteca" && setup.bgLib ) return fittedBackground(setup.bgLib, setup.bgFocus, setup, onStatus);
   const custom = customBackground(setup.layout, setup.biome);
-  if ( custom ) return custom;
+  if ( custom ) return fittedBackground(custom, setup.bgFocus, setup, onStatus);
   const visual = setup.layout === "mesa"
     ? { l: "mesa", b: setup.biome, t: setup.table, m: setup.mana, s: setup.seed, slots, v: 1 }
     : { l: "campo", b: setup.biome, t: setup.time, m: setup.mana, s: setup.seed, v: 1 };

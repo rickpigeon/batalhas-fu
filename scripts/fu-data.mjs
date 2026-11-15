@@ -92,8 +92,15 @@ export function combatInfo(combat) {
       left: Math.max(0, left)
     };
   });
-  let faction = fu ? combat.getCurrentTurn() ?? null : null;
-  if ( !faction && acting ) faction = list.find(x => x.id === acting.id)?.faction ?? null;
+  /* the side whose turn it is: the acting combatant's side, else the system's flag, else the system's guess */
+  const actingEntry = acting ? list.find(x => x.id === acting.id) : null;
+  let faction = actingEntry?.faction ?? null;
+  if ( !faction && fu ) faction = combat.getCurrentTurn() ?? null;
+  if ( !faction && fu && combat.started && typeof combat.determineNextTurn === "function" ) {
+    try {
+      faction = combat.determineNextTurn() ?? null;
+    } catch ( err ) { /* system internals changed */ }
+  }
   const outOfTurns = combat.started && list.filter(x => !x.defeated).every(x => x.left <= 0);
   return {
     id: combat.id,

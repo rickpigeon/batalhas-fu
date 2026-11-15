@@ -43,6 +43,8 @@ export const HUD = {
       const root = overlay();
       root.hidden = false;
       root.dataset.layout = flags.layout ?? "campo";
+      root.style.setProperty("--bfu-s", String(Math.max(0.7, Math.min(1.4, Number(setting("hudEscala", 1)) || 1))));
+      root.classList.toggle("no-plates", !setting("plaquinhas", true));
       this.scene = scene;
       this.flags = flags;
       this.info = combatInfo(combatOfScene(scene));
@@ -178,6 +180,11 @@ export const HUD = {
 
   renderPlates() {
     const box = layer("plates");
+    if ( !setting("plaquinhas", true) ) {
+      for ( const p of this.plates.values() ) p.remove();
+      this.plates.clear();
+      return;
+    }
     const layout = this.flags?.layout ?? "campo";
     const gm = game.user.isGM;
     const showFoeHP = gm || setting("pvInimigos", false);
@@ -201,8 +208,8 @@ export const HUD = {
           + `<div class="bfu-icons">${icons}</div>${pips}`;
       }
       else {
-        const hpBar = st.hp && showHP ? `<div class="bfu-meter hp"><i style="width:${pct(st.hp.value, st.hp.max)}%"></i><b>${st.hp.value}<small>/${st.hp.max}</small></b></div>` : "";
-        const mpBar = party && st.mp ? `<div class="bfu-meter mp"><i style="width:${pct(st.mp.value, st.mp.max)}%"></i><b>${st.mp.value}<small>/${st.mp.max}</small></b></div>` : "";
+        const hpBar = st.hp && showHP ? `<div class="bfu-meter thin hp" title="PV ${st.hp.value}/${st.hp.max}"><i style="width:${pct(st.hp.value, st.hp.max)}%"></i></div>` : "";
+        const mpBar = party && st.mp ? `<div class="bfu-meter thin mp" title="PM ${st.mp.value}/${st.mp.max}"><i style="width:${pct(st.mp.value, st.mp.max)}%"></i></div>` : "";
         html = `<div class="bfu-name">${escapeHTML(doc.name ?? actor?.name ?? "")}${st.crisis ? ` <i class="fa-solid fa-heart-crack" title="Em crise"></i>` : ""}</div>${hpBar}${mpBar}`
           + `<div class="bfu-row">${icons ? `<div class="bfu-icons">${icons}</div>` : ""}${pips}</div>`;
       }
@@ -228,7 +235,8 @@ export const HUD = {
 
   positionPlates() {
     const layout = this.flags?.layout ?? "campo";
-    const z = Math.max(0.55, Math.min(1.35, zoom()));
+    const s = Math.max(0.7, Math.min(1.4, Number(setting("hudEscala", 1)) || 1));
+    const z = Math.max(0.55, Math.min(1.35, zoom())) * s;
     this.positionSpot(layout);
     for ( const [id, plate] of this.plates ) {
       const r = tokenRect(id);
@@ -247,7 +255,7 @@ export const HUD = {
       else {
         /* beside the token, on the outer side (party to the right, foes to the left) */
         const party = plate.classList.contains("party");
-        plate.style.left = `${party ? r.x + r.w * 0.92 : r.x + r.w * 0.08}px`;
+        plate.style.left = `${party ? r.x + r.w + 6 : r.x - 6}px`;
         plate.style.top = `${r.y + r.h * 0.55}px`;
         plate.style.transform = `translate(${party ? "0" : "-100%"}, -50%) scale(${z.toFixed(3)})`;
         plate.style.transformOrigin = party ? "0 50%" : "100% 50%";
@@ -405,6 +413,7 @@ export const HUD = {
    */
   banner(kind, title, sub = "", img = "") {
     if ( !canSeeHud() || !document.getElementById("bfu-overlay") ) return;
+    if ( kind === "acting" ) return this.pill(title, sub, img);
     this.bannerChain = this.bannerChain.then(() => new Promise(resolve => {
       const ui = layer("ui");
       const el = document.createElement("div");
@@ -428,6 +437,22 @@ export const HUD = {
         .finished.finally(() => flash.remove());
       setTimeout(resolve, short ? 650 : 1000);
     })).catch(() => null);
+  },
+
+  /** Small notice under the turn bar for the combatant who starts acting. */
+  pill(title, sub, img) {
+    const ui = layer("ui");
+    ui.querySelector(".bfu-pill")?.remove();
+    const el = document.createElement("div");
+    el.className = "bfu-pill";
+    el.innerHTML = `${img ? `<img src="${escapeHTML(img)}" alt="">` : ""}<b>${escapeHTML(title)}</b>${sub ? `<small>${escapeHTML(sub)}</small>` : ""}`;
+    ui.append(el);
+    el.animate([
+      { opacity: 0, transform: "translate(-50%, -12px) scale(var(--bfu-s, 1))" },
+      { offset: 0.12, opacity: 1, transform: "translate(-50%, 0) scale(var(--bfu-s, 1))" },
+      { offset: 0.85, opacity: 1, transform: "translate(-50%, 0) scale(var(--bfu-s, 1))" },
+      { opacity: 0, transform: "translate(-50%, -8px) scale(var(--bfu-s, 1))" }
+    ], { duration: 2600, easing: "ease-out", fill: "both" }).finished.finally(() => el.remove());
   },
 
   /** Compare the combat with the last snapshot and announce what changed (every client). */
@@ -459,15 +484,26 @@ export const HUD = {
     }
   },
 
-  /** A combat or its combatants changed. */
+  /**
+   * A combat or its combatants changed. The system writes several updates in a row for one turn change
+   * (turns taken, acting combatant, side, turn number), so the HUD waits for them to settle and then
+   * draws and announces only the final state.
+   */
   onCombat(combat) {
-    if ( !this.scene || combat?.scene?.id !== this.scene.id ) return;
-    this.info = combatInfo(combatOfScene(this.scene));
-    this.announce();
-    this.renderBar();
-    this.renderPlates();
-    this.renderPanel();
-    this.renderSide();
+    if ( !this.scene || (combat && combat.scene && combat.scene.id !== this.scene.id) ) return;
+    clearTimeout(this.combatTimer);
+    this.combatTimer = setTimeout(() => {
+      try {
+        this.info = combatInfo(combatOfScene(this.scene));
+        this.announce();
+        this.renderBar();
+        this.renderPlates();
+        this.renderPanel();
+        this.renderSide();
+      } catch ( err ) {
+        reportError(err, "HUD");
+      }
+    }, 140);
   },
 
   /** An actor or token changed (HP, MP, statuses...). */

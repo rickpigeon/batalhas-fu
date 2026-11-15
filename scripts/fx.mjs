@@ -6,9 +6,11 @@
  * by the DOM layer of every client (broadcast through the module socket). Token reactions (hit flash,
  * turn glow, crisis, KO) use Token Magic FX when it is active.
  *
- * Only the active GM runs this file's playback: players' system events are relayed to the GM first.
+ * Visual effects are played by the client where the event happened (Sequencer syncs them to everybody;
+ * the DOM version is broadcast). Token reactions (Token Magic flags) are written by the active GM.
  */
 import { ELEMENTS, FRIENDLY, MODULE_ID, PATH, SOCKET, elementOf, hexToNumber, isActiveGM } from "./constants.mjs";
+import { logEvent } from "./log.mjs";
 import { setting } from "./store.mjs";
 import { playDomFx } from "./fx-dom.mjs";
 
@@ -172,7 +174,32 @@ function sequencerPlay(steps, source, targets) {
 }
 
 /* ---------------------------------------------------------------------------------------------- */
-/* Token Magic FX reactions                                                                         */
+/* Token documents                                                                                  */
+/* ---------------------------------------------------------------------------------------------- */
+
+/** TokenDocument from a uuid or an id (the viewed scene first, then the running battle's scene). */
+export function tokenDoc(ref) {
+  if ( !ref ) return null;
+  if ( typeof ref === "object" ) return ref.document ?? ref;
+  const s = String(ref);
+  if ( s.includes(".") ) return globalThis.fromUuidSync?.(s) ?? null;
+  const viewed = canvas?.scene?.tokens?.get(s);
+  if ( viewed ) return viewed;
+  for ( const scene of game.scenes ?? [] ) {
+    const t = scene.tokens?.get?.(s);
+    if ( t ) return t;
+  }
+  return null;
+}
+
+const idOf = ref => (ref ? String(ref).split(".").pop() : null);
+const sceneOf = ref => {
+  const p = String(ref ?? "").split(".");
+  return p[0] === "Scene" ? p[1] : canvas?.scene?.id ?? null;
+};
+
+/* ---------------------------------------------------------------------------------------------- */
+/* Token Magic FX reactions (active GM; documents work even when the GM looks at another scene)     */
 /* ---------------------------------------------------------------------------------------------- */
 
 const glow = (id, color, strength, loopMs, loops, autoDestroy) => ({
@@ -181,32 +208,42 @@ const glow = (id, color, strength, loopMs, loops, autoDestroy) => ({
   animated: { outerStrength: { active: true, loopDuration: loopMs, animType: "syncCosOscillation", val1: strength, val2: 0.5, ...(loops ? { loops } : {}) } }
 });
 
-async function tmfx(token, params) {
-  if ( !hasTMFX() || !token ) return;
+/** Token Magic wants the placeable when there is one; its functions also accept the document. */
+function tmTarget(ref) {
+  const doc = tokenDoc(ref);
+  return doc?.object ?? doc ?? null;
+}
+
+async function tmfx(ref, params) {
+  const target = tmTarget(ref);
+  if ( !hasTMFX() || !target ) return;
   try {
-    await TokenMagic.addUpdateFilters(token, Array.isArray(params) ? params : [params]);
+    await TokenMagic.addUpdateFilters(target, Array.isArray(params) ? params : [params]);
   } catch ( err ) {
     console.warn(`${MODULE_ID} | Token Magic`, err);
+    logEvent({ kind: "erro", text: `Token Magic: ${err.message}` });
   }
 }
-async function tmfxRemove(token, id) {
-  if ( !hasTMFX() || !token ) return;
+async function tmfxRemove(ref, id) {
+  const target = tmTarget(ref);
+  if ( !hasTMFX() || !target ) return;
   try {
-    if ( TokenMagic.hasFilterId?.(token, id) ) await TokenMagic.deleteFilters(token, id);
+    const flags = (target.document ?? target).getFlag?.("tokenmagic", "filters") ?? [];
+    if ( flags.some?.(f => f?.tmFilters?.tmFilterId === id) ) await TokenMagic.deleteFilters(target, id);
   } catch ( err ) {
     console.warn(`${MODULE_ID} | Token Magic`, err);
   }
 }
 
 export const React = {
-  hit: (token, element) => tmfx(token, glow("bfuHit", element ? ELEMENTS[elementOf(element)].color : "#ff3b3b", 7, 260, 2, true)),
-  heal: (token, color = "#7dff9e") => tmfx(token, glow("bfuHeal", color, 6, 500, 2, true)),
-  crisis: (token, on) => (on ? tmfx(token, glow("bfuCrisis", "#ff2a2a", 4, 1400, 0, false)) : tmfxRemove(token, "bfuCrisis")),
-  ko: (token, on) => (on
-    ? tmfx(token, { filterType: "adjustment", filterId: "bfuKO", saturation: 0, brightness: 0.55, contrast: 1, gamma: 1, red: 1, green: 1, blue: 1, alpha: 0.85, animated: {} })
-    : tmfxRemove(token, "bfuKO")),
-  turn: (token, faction, on) => {
-    if ( !on ) return tmfxRemove(token, "bfuTurn");
+  hit: (ref, element) => tmfx(ref, glow("bfuHit", element ? ELEMENTS[elementOf(element)].color : "#ff3b3b", 7, 260, 2, true)),
+  heal: (ref, color = "#7dff9e") => tmfx(ref, glow("bfuHeal", color, 6, 500, 2, true)),
+  crisis: (ref, on) => (on ? tmfx(ref, glow("bfuCrisis", "#ff2a2a", 4, 1400, 0, false)) : tmfxRemove(ref, "bfuCrisis")),
+  ko: (ref, on) => (on
+    ? tmfx(ref, { filterType: "adjustment", filterId: "bfuKO", saturation: 0, brightness: 0.55, contrast: 1, gamma: 1, red: 1, green: 1, blue: 1, alpha: 0.85, animated: {} })
+    : tmfxRemove(ref, "bfuKO")),
+  turn: (ref, faction, on) => {
+    if ( !on ) return tmfxRemove(ref, "bfuTurn");
     const c1 = faction === FRIENDLY ? "#ffd36b" : "#ff5a5a";
     const c2 = faction === FRIENDLY ? "#7fd8ff" : "#ff9a3a";
     const params = glow("bfuTurn", c1, 5, 1600, 0, false);
@@ -214,100 +251,142 @@ export const React = {
       outerStrength: { active: true, loopDuration: 1600, animType: "syncCosOscillation", val1: 6, val2: 2 },
       color: { active: true, loopDuration: 3200, animType: "colorOscillation", val1: hexToNumber(c1), val2: hexToNumber(c2) }
     };
-    return tmfx(token, params);
+    return tmfx(ref, params);
   }
 };
 
 /* ---------------------------------------------------------------------------------------------- */
-/* Turn marker (persistent ring under the acting token)                                             */
+/* Turn marker (active GM): one queue, so switching quickly never removes the new marker             */
 /* ---------------------------------------------------------------------------------------------- */
 
-export async function showTurnMarker(tokenId, faction) {
-  hideTurnMarker();
-  const token = placeable(tokenId);
-  if ( !token ) return;
-  const color = faction === FRIENDLY ? "#ffd36b" : "#ff6b6b";
-  if ( hasSequencer() ) {
+let marked = null;
+let markerChain = Promise.resolve();
+
+async function endTurnRing(tokenId) {
+  if ( !hasSequencer() ) return;
+  try {
+    await globalThis.Sequencer?.EffectManager?.endEffects?.({ name: tokenId ? `bfu-turn-${tokenId}` : "bfu-turn-*" });
+  } catch ( err ) { /* nothing to end */ }
+}
+
+async function applyMarker(tokenId, faction) {
+  if ( marked && marked !== tokenId ) {
+    await endTurnRing(marked);
+    await React.turn(marked, null, false);
+    marked = null;
+  }
+  if ( !tokenId || marked === tokenId ) return;
+  marked = tokenId;
+  const token = canvas?.tokens?.get(tokenId);
+  if ( hasSequencer() && token ) {
+    const color = faction === FRIENDLY ? "#ffd36b" : "#ff6b6b";
     try {
-      await new Sequence({ moduleName: MODULE_ID, softFail: true }).effect().file(FX_IMG("turn")).name("bfu-turn").attachTo(token, { bindAlpha: false })
+      await new Sequence({ moduleName: MODULE_ID, softFail: true }).effect().file(FX_IMG("turn")).name(`bfu-turn-${tokenId}`).attachTo(token, { bindAlpha: false })
         .scaleToObject(1.7).tint(color).belowTokens().persist().fadeIn(300).fadeOut(300).scaleIn(0.4, 500, { ease: "easeOutBack" })
         .loopProperty("sprite", "rotation", { from: 0, to: 360, duration: 9000 })
-        .loopProperty("sprite", "alpha", { values: [0.75, 1], duration: 900, pingPong: true })
         .play();
     } catch ( err ) {
       console.warn(`${MODULE_ID} | Sequencer`, err);
     }
   }
-  await React.turn(token, faction, true);
-  marked = tokenId;
+  await React.turn(tokenId, faction, true);
 }
 
-let marked = null;
-export async function hideTurnMarker() {
-  if ( hasSequencer() ) {
-    try {
-      await globalThis.Sequencer?.EffectManager?.endEffects?.({ name: "bfu-turn" });
-    } catch ( err ) { /* nothing to end */ }
-  }
-  if ( marked ) await React.turn(placeable(marked), null, false);
-  marked = null;
+/** Show the turn marker on a token (null = nobody). Calls are queued in order. */
+export function setTurnMarker(tokenId, faction) {
+  markerChain = markerChain.then(() => applyMarker(tokenId ?? null, faction)).catch(err => console.warn(`${MODULE_ID} | marcador`, err));
+  return markerChain;
+}
+
+export function showTurnMarker(tokenId, faction) {
+  return setTurnMarker(tokenId, faction);
+}
+
+/** Remove every turn marker (end of battle). */
+export function hideTurnMarker() {
+  markerChain = markerChain.then(async () => {
+    if ( marked ) await React.turn(marked, null, false);
+    marked = null;
+    await endTurnRing(null);
+  }).catch(() => null);
+  return markerChain;
 }
 
 /* ---------------------------------------------------------------------------------------------- */
-/* Entry point (active GM)                                                                          */
+/* Playing an event                                                                                 */
 /* ---------------------------------------------------------------------------------------------- */
 
 /**
- * Play an event: { kind, source (token uuid), targets [token uuids], element, style, crit, ... }.
- * Text pop-ups (damage numbers, affinity words) always go through the DOM layer of every client.
+ * Visuals of an event, on THIS client: Sequencer (synced to everybody by Sequencer) when it is active and
+ * the tokens are on this canvas; otherwise the module's own animation, broadcast to every client.
+ * Damage numbers, affinity words and the screen shake always go to everybody.
+ * @param {object} e { kind, source, targets, element, style, crit, fumble, amount, affinity, resource }
  */
-export async function playEvent(e) {
-  if ( !isActiveGM() ) return;
+export async function playVisuals(e) {
   const allowed = setting("animacoes", true);
-  const source = placeable(e.source);
-  const targets = (e.targets ?? []).map(placeable).filter(Boolean);
-  if ( !targets.length && source ) targets.push(source);
+  const sceneId = sceneOf(e.targets?.[0] ?? e.source);
+  const targetIds = (e.targets?.length ? e.targets : [e.source]).filter(Boolean).map(idOf);
+  const sourceId = idOf(e.source);
 
-  /* reactions and pop-ups */
   if ( e.kind === "damage" ) {
-    for ( const t of targets ) React.hit(t, e.element);
-    broadcastDom({ type: "pop", targets: targets.map(t => t.id), text: String(e.amount ?? ""), element: e.element, affinity: e.affinity, crit: e.crit });
-    if ( allowed && hasSequencer() && setting("tremor", true) && (e.crit || e.affinity === "vulnerability") ) {
-      try {
-        new Sequence({ moduleName: MODULE_ID, softFail: true }).canvasPan().shake({ duration: 380, strength: 12, rotation: false }).play();
-      } catch ( err ) { /* old Sequencer */ }
+    broadcastDom({ type: "pop", sceneId, targets: targetIds, text: String(e.amount ?? ""), element: e.element, affinity: e.affinity, crit: e.crit });
+    if ( allowed && setting("tremor", true) && (e.crit || e.affinity === "vulnerability") ) {
+      let shook = false;
+      if ( hasSequencer() ) {
+        try {
+          await new Sequence({ moduleName: MODULE_ID, softFail: true }).canvasPan().shake({ duration: 380, strength: 12, rotation: false }).play();
+          shook = true;
+        } catch ( err ) { /* older Sequencer */ }
+      }
+      if ( !shook ) broadcastDom({ type: "shake", sceneId });
     }
-    else if ( e.crit || e.affinity === "vulnerability" ) broadcastDom({ type: "shake" });
-    return;
+    return "números";
   }
-  if ( e.kind === "gain" ) {
-    for ( const t of targets ) React.heal(t, e.resource === "mp" ? "#7fb8ff" : "#7dff9e");
-    broadcastDom({ type: "pop", targets: targets.map(t => t.id), text: `+${e.amount ?? ""}`, resource: e.resource });
-  }
-  if ( e.kind === "crisis" ) for ( const t of targets ) React.crisis(t, true);
-  if ( e.kind === "defeat" ) for ( const t of targets ) React.ko(t, true);
-  if ( e.kind === "attack" && e.fumble ) broadcastDom({ type: "pop", targets: [source?.id].filter(Boolean), text: "Falha!", resource: "fumble" });
+  if ( e.kind === "gain" ) broadcastDom({ type: "pop", sceneId, targets: targetIds, text: `+${e.amount ?? ""}`, resource: e.resource });
+  if ( e.kind === "attack" && e.fumble && sourceId ) broadcastDom({ type: "pop", sceneId, targets: [sourceId], text: "Falha!", resource: "fumble" });
+  if ( !allowed ) return "desligadas";
 
-  if ( !allowed ) return;
   const steps = recipeFor(e);
-  if ( !steps.length ) return;
-  if ( hasSequencer() && source ) {
+  if ( !steps.length ) return "sem receita";
+  const source = canvas?.scene?.id === sceneId ? canvas.tokens.get(sourceId) : null;
+  const targets = canvas?.scene?.id === sceneId ? targetIds.map(id => canvas.tokens.get(id)).filter(Boolean) : [];
+  if ( hasSequencer() && source && targets.length ) {
     try {
       await sequencerPlay(steps, source, targets);
-      return;
+      return "Sequencer";
     } catch ( err ) {
       console.warn(`${MODULE_ID} | Sequencer falhou; usando a animação própria`, err);
+      logEvent({ kind: "erro", text: `Sequencer: ${err.message}` });
     }
   }
-  broadcastDom({ type: "fx", steps, source: source?.id ?? null, targets: targets.map(t => t.id) });
+  broadcastDom({ type: "fx", sceneId, steps, source: sourceId, targets: targetIds });
+  return "animação própria";
 }
 
-/** Send a DOM effect to every client (and play it here). */
+/** Token reactions of an event (active GM only: Token Magic writes token flags). */
+export async function applyReactions(e) {
+  if ( !isActiveGM() || !setting("animacoes", true) ) return;
+  const targets = (e.targets?.length ? e.targets : [e.source]).filter(Boolean);
+  if ( e.kind === "damage" ) for ( const t of targets ) React.hit(t, e.element);
+  if ( e.kind === "gain" ) for ( const t of targets ) React.heal(t, e.resource === "mp" ? "#7fb8ff" : "#7dff9e");
+  if ( e.kind === "crisis" ) for ( const t of targets ) React.crisis(t, true);
+  if ( e.kind === "defeat" ) for ( const t of targets ) React.ko(t, true);
+}
+
+/** Visuals here + reactions by the GM (used by the GM itself and by tests). */
+export async function playEvent(e) {
+  const how = await playVisuals(e);
+  if ( isActiveGM() ) await applyReactions(e);
+  return how;
+}
+
+/** Send a DOM effect to every client (and play it here). `sceneId` is the scene of the tokens. */
 export function broadcastDom(msg) {
+  const full = { ...msg, sceneId: msg.sceneId ?? canvas?.scene?.id ?? null };
   try {
-    game.socket?.emit(SOCKET, { ...msg, scope: "dom", sceneId: canvas?.scene?.id ?? null });
+    game.socket?.emit(SOCKET, { ...full, scope: "dom" });
   } catch ( err ) { /* offline */ }
-  playDomFx(msg);
+  playDomFx(full);
 }
 
 export const backends = () => ({ sequencer: hasSequencer(), tokenmagic: hasTMFX(), jb2a: hasJB2A() });

@@ -12,6 +12,7 @@ export function registerSettings() {
   hidden("batalha", { active: false });
   hidden("fundos", { campo: {}, mesa: {} });
   hidden("cacheFundos", {});
+  game.settings.register(MODULE_ID, "favFundos", { scope: "world", config: false, type: Array, default: [] });
 
   game.settings.register(MODULE_ID, "hudJogadores", {
     name: "Jogadores veem a batalha animada",
@@ -26,7 +27,7 @@ export function registerSettings() {
   game.settings.register(MODULE_ID, "animarFora", {
     name: "Animar também fora das batalhas",
     hint: "Liga as animações de ataque e magia em qualquer cena, não só nas cenas criadas pelo Batalhas FU.",
-    scope: "world", config: true, type: Boolean, default: false
+    scope: "world", config: true, type: Boolean, default: true
   });
   game.settings.register(MODULE_ID, "usarJB2A", {
     name: "Usar efeitos do JB2A quando houver",
@@ -42,6 +43,25 @@ export function registerSettings() {
     name: "Jogadores veem os PV dos inimigos",
     hint: "Desligado, os jogadores veem só o nome e se o inimigo está em crise.",
     scope: "world", config: true, type: Boolean, default: false
+  });
+  game.settings.register(MODULE_ID, "pastaFundos", {
+    name: "Pasta da biblioteca de fundos",
+    hint: "Pasta (dentro dos dados do Foundry) com as imagens de fundo extras e o indice.json. Padrão: batalhas-fu-fundos.",
+    scope: "world", config: true, type: String, default: "batalhas-fu-fundos"
+  });
+  game.settings.register(MODULE_ID, "hudEscala", {
+    name: "Tamanho do HUD da batalha (nesta tela)",
+    hint: "Aumenta ou diminui a barra de turnos, as plaquinhas, o painel do grupo e as faixas.",
+    scope: "client", config: true, type: Number, default: 1, range: { min: 0.7, max: 1.4, step: 0.05 }
+  });
+  game.settings.register(MODULE_ID, "plaquinhas", {
+    name: "Plaquinhas com nome e PV nos tokens (nesta tela)",
+    scope: "client", config: true, type: Boolean, default: true
+  });
+  game.settings.register(MODULE_ID, "turnosAuto", {
+    name: "Abrir a janela de turnos ao entrar numa batalha (mestre)",
+    hint: "A janela Turnos da batalha concentra os controles do mestre e pode ser movida e redimensionada.",
+    scope: "client", config: true, type: Boolean, default: true
   });
   game.settings.register(MODULE_ID, "ambiente", {
     name: "Partículas do bioma (nesta tela)",
@@ -74,7 +94,10 @@ export const DEFAULT_SETUP = {
   mirrorFoes: false,
   intro: true,
   activate: true,
-  startCombat: true
+  startCombat: true,
+  bgMode: "gerado",
+  bgLib: "",
+  bgFocus: 0.6
 };
 
 export function normalizeSetup(raw = {}) {
@@ -91,7 +114,10 @@ export function normalizeSetup(raw = {}) {
     mirrorFoes: bool(o.mirrorFoes, false),
     intro: bool(o.intro, true),
     activate: bool(o.activate, true),
-    startCombat: bool(o.startCombat, true)
+    startCombat: bool(o.startCombat, true),
+    bgMode: o.bgMode === "biblioteca" ? "biblioteca" : "gerado",
+    bgLib: str(o.bgLib, "", 2000),
+    bgFocus: num(o.bgFocus, 0.6, 0, 1)
   };
 }
 

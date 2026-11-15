@@ -2,7 +2,7 @@
   "id": "batalhas-fu",
   "title": "Batalhas FU",
   "description": "<p>Área de combate para Fabula Ultima: o mestre monta a batalha numa cena própria, com fundo por bioma (ou imagem sua), o grupo em fileira de um lado e os inimigos do outro, ou todos em cartas sobre uma mesa decorada. Abertura com cartas embaralhadas que viram sobre os tokens, barra de turnos grupo × inimigos ligada ao combate do sistema, faixas de turno, brilho do lado da vez, partículas do bioma e animações de ataques, magias, dano, cura, crise e derrota (Sequencer e Token Magic FX quando ativos, ou animações próprias). Só o mestre controla o módulo.</p>",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "authors": [
     {
       "name": "rickpigeon",
@@ -44,7 +44,7 @@
   "license": "LICENSE",
   "url": "https://github.com/rickpigeon/Batalhas-FU",
   "manifest": "https://github.com/rickpigeon/Batalhas-FU/releases/latest/download/module.json",
-  "download": "https://github.com/rickpigeon/Batalhas-FU/releases/download/v1.0.0/module.zip",
+  "download": "https://github.com/rickpigeon/Batalhas-FU/releases/download/v1.1.0/module.zip",
   "bugs": "https://github.com/rickpigeon/Batalhas-FU/issues",
   "readme": "https://github.com/rickpigeon/Batalhas-FU/blob/main/README.md",
   "changelog": "https://github.com/rickpigeon/Batalhas-FU/blob/main/CHANGELOG.md"

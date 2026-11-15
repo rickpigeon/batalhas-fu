@@ -10,7 +10,7 @@ import {
   BIOMES, ELEMENTS, LAYOUTS, MANA_ELEMENTS, MODULE_ID, MODULE_TITLE, TABLES, TIMES, escapeHTML, isGM
 } from "./constants.mjs";
 import {
-  customBackground, getBattle, loadLastSetup, normalizeSetup, saveLastSetup, setCustomBackground
+  customBackground, getBattle, isBattleScene, loadLastSetup, normalizeSetup, saveLastSetup, setCustomBackground, setting
 } from "./store.mjs";
 import { backgroundSVG } from "./backgrounds.mjs";
 import { tableCardSize, tableSlots } from "./layout.mjs";
@@ -20,6 +20,10 @@ import { browse } from "./files.mjs";
 import { HUD } from "./hud.mjs";
 import { SOCKET } from "./constants.mjs";
 import { guard, reportError } from "./errors.mjs";
+import { favorites, libraryFolder, loadLibrary, toggleFavorite } from "./library.mjs";
+import { describe, getLog, logEvent, onLog } from "./log.mjs";
+import { damageHookActive } from "./fu-bridge.mjs";
+import { TurnControlApp } from "./turn-app.mjs";
 
 const { ApplicationV2 } = foundry.applications.api;
 const APP_ID = `${MODULE_ID}-painel`;
@@ -201,13 +205,28 @@ export class BattlePanel extends ApplicationV2 {
     const variant = d.layout === "mesa"
       ? `<label>Mesa <select name="table">${Object.entries(TABLES).map(([k, l]) => `<option value="${k}"${d.table === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>`
       : `<label>Hora <select name="time">${Object.entries(TIMES).map(([k, l]) => `<option value="${k}"${d.time === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>`;
-    pane.querySelector(".bfu-opts").innerHTML = `${variant}
+    const lib = d.bgMode === "biblioteca";
+    const custom = customBackground(d.layout, d.biome);
+    const libItem = this.libItems?.find(x => x.src === d.bgLib);
+    const libBlock = lib
+      ? `<div class="bfu-libsel">${d.bgLib ? `<img src="${escapeHTML(libItem?.thumb ?? d.bgLib)}" alt="">` : `<span class="bfu-libsel-empty"><i class="fa-solid fa-images"></i></span>`}
+          <div><b>${d.bgLib ? escapeHTML(libItem?.name ?? decodeURIComponent(d.bgLib.split("/").pop())) : "Nenhuma imagem escolhida"}</b>
+          <button type="button" data-act="openLib"><i class="fa-solid fa-images"></i> Escolher na biblioteca…</button></div></div>`
+      : "";
+    const focus = (lib && d.bgLib) || (!lib && custom)
+      ? `<label>Altura do recorte <span class="bfu-inline"><input type="range" name="bgFocus" min="0" max="1" step="0.01" value="${d.bgFocus}"><output>${Math.round(d.bgFocus * 100)}%</output></span></label>`
+      : "";
+    pane.querySelector(".bfu-opts").innerHTML = `
+      <div class="bfu-bgmode"><span>Fundo</span><div class="bfu-seg">
+        <button type="button" data-bgmode="gerado" class="${lib ? "" : "active"}">${custom ? "Do bioma ★" : "Gerado"}</button>
+        <button type="button" data-bgmode="biblioteca" class="${lib ? "active" : ""}">Biblioteca</button></div></div>
+      ${libBlock}${focus}${variant}
       <label>Mana no ar <select name="mana">${manaOpts}</select></label>
       <label>Variação <span class="bfu-inline"><input type="number" name="seed" min="1" max="99999" value="${d.seed}"><button type="button" data-act="dice" title="Sortear"><i class="fa-solid fa-dice"></i></button></span></label>
       ${d.layout === "campo" ? `<label>Tamanho dos tokens <span class="bfu-inline"><input type="range" name="tokenScale" min="0.8" max="2.6" step="0.1" value="${d.tokenScale}"><output>${d.tokenScale.toFixed(1)}×</output></span></label>
       <label class="bfu-check"><input type="checkbox" name="mirrorParty"${d.mirrorParty ? " checked" : ""}> Espelhar o grupo</label>
       <label class="bfu-check"><input type="checkbox" name="mirrorFoes"${d.mirrorFoes ? " checked" : ""}> Espelhar os inimigos</label>` : ""}
-      ${customBackground(d.layout, d.biome) ? `<p class="bfu-hint">★ Este bioma usa um fundo próprio (aba Fundos).</p>` : ""}`;
+      ${custom && !lib ? `<p class="bfu-hint">★ Este bioma usa um fundo próprio (aba Fundos).</p>` : ""}`;
     this.renderPreview();
     pane.querySelector(".bfu-party").innerHTML = (this.party ?? []).map(p => `<label class="bfu-who${p.on ? " on" : ""}"><input type="checkbox" data-party="${p.key}"${p.on ? " checked" : ""}><img src="${escapeHTML(p.img)}" alt=""><span>${escapeHTML(p.name)}</span></label>`).join("")
       || `<p class="bfu-hint">Nenhum personagem de jogador no mundo.</p>`;
@@ -224,12 +243,84 @@ export class BattlePanel extends ApplicationV2 {
   }
 
   renderPreview() {
-    const img = this.root.querySelector(".bfu-preview img");
-    const custom = customBackground(this.draft.layout, this.draft.biome);
+    const box = this.root.querySelector(".bfu-preview");
+    const img = box.querySelector("img");
+    const d = this.draft;
+    const custom = customBackground(d.layout, d.biome);
+    const photo = d.bgMode === "biblioteca" ? d.bgLib : custom;
     clearTimeout(this.previewTimer);
     this.previewTimer = setTimeout(() => {
-      img.src = custom || thumb(this.draft, 520);
+      if ( photo ) {
+        img.hidden = true;
+        box.style.backgroundImage = `url("${photo.replace(/"/g, "%22")}")`;
+        box.style.backgroundPosition = `50% ${Math.round(d.bgFocus * 100)}%`;
+      }
+      else {
+        box.style.backgroundImage = "";
+        img.hidden = false;
+        img.src = d.bgMode === "biblioteca" ? "" : thumb(d, 520);
+      }
     }, 60);
+  }
+
+  /* ------------------------------------------------------------------------------------------ */
+  /* Background library (gallery inside the panel)                                                */
+  /* ------------------------------------------------------------------------------------------ */
+
+  async openLibrary(target) {
+    this.libTarget = target;
+    this.libFav = this.libFav ?? false;
+    this.libQuery = "";
+    let modal = this.root.querySelector(".bfu-libmodal");
+    if ( !modal ) {
+      modal = document.createElement("div");
+      modal.className = "bfu-libmodal";
+      this.root.append(modal);
+      modal.addEventListener("input", ev => {
+        if ( !ev.target.matches(".bfu-libsearch") ) return;
+        this.libQuery = ev.target.value.trim();
+        this.renderLibraryGrid();
+      });
+    }
+    modal.hidden = false;
+    modal.innerHTML = `<div class="bfu-libbox"><header><b><i class="fa-solid fa-images"></i> Biblioteca de fundos</b>
+        <input type="search" class="bfu-libsearch" placeholder="Número…">
+        <button type="button" data-libfav class="${this.libFav ? "active" : ""}"><i class="fa-solid fa-star"></i> Favoritos</button>
+        <button type="button" data-libclose title="Fechar"><i class="fa-solid fa-xmark"></i></button></header>
+        <div class="bfu-libgrid"><p class="bfu-hint"><i class="fa-solid fa-spinner fa-spin"></i> Carregando…</p></div></div>`;
+    this.libItems = await loadLibrary(true);
+    this.renderLibraryGrid();
+  }
+
+  renderLibraryGrid() {
+    const grid = this.root.querySelector(".bfu-libgrid");
+    if ( !grid ) return;
+    const items = this.libItems ?? [];
+    if ( !items.length ) {
+      grid.innerHTML = `<div class="bfu-libempty"><i class="fa-solid fa-folder-open"></i><p>Nenhuma imagem em <code>${escapeHTML(libraryFolder())}</code>.</p>
+        <p class="bfu-hint">Copie a pasta <b>batalhas-fu-fundos</b> para a pasta Data do Foundry (ou mude o caminho em Configurações › Batalhas FU › Pasta da biblioteca de fundos).</p></div>`;
+      return;
+    }
+    const fav = favorites();
+    const q = this.libQuery;
+    const list = items.filter(x => (!this.libFav || fav.has(x.src)) && (!q || String(x.n).includes(q) || x.name.toLowerCase().includes(q.toLowerCase())));
+    const current = this.libTarget?.type === "setup" ? this.draft.bgLib : customBackground(this.libTarget?.layout, this.libTarget?.biome);
+    grid.innerHTML = list.map(x => `<div class="bfu-libitem${x.src === current ? " active" : ""}" data-lib="${escapeHTML(x.src)}" title="${escapeHTML(x.name)}">`
+      + `<img loading="lazy" src="${escapeHTML(x.thumb)}" alt=""><span>${x.n}</span>`
+      + `<button type="button" class="bfu-star${fav.has(x.src) ? " on" : ""}" data-fav="${escapeHTML(x.src)}" title="Favorito"><i class="fa-solid fa-star"></i></button></div>`).join("")
+      || `<p class="bfu-hint">Nada encontrado.</p>`;
+  }
+
+  async pickLibrary(src) {
+    const target = this.libTarget;
+    this.root.querySelector(".bfu-libmodal").hidden = true;
+    if ( target?.type === "biome" ) {
+      await setCustomBackground(target.layout, target.biome, src);
+      return this.renderBackgrounds();
+    }
+    this.draft = normalizeSetup({ ...this.draft, bgMode: "biblioteca", bgLib: src });
+    saveLastSetup(this.draft);
+    this.renderNew();
   }
 
   onChange(ev) {
@@ -251,6 +342,11 @@ export class BattlePanel extends ApplicationV2 {
     d[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.type === "range" ? Number(el.value) : el.value;
     this.draft = normalizeSetup(d);
     saveLastSetup(this.draft);
+    if ( el.name === "bgFocus" ) {
+      el.nextElementSibling.textContent = `${Math.round(this.draft.bgFocus * 100)}%`;
+      this.root.querySelector(".bfu-preview").style.backgroundPosition = `50% ${Math.round(this.draft.bgFocus * 100)}%`;
+      return;
+    }
     if ( el.type === "range" ) {
       el.nextElementSibling.textContent = `${this.draft.tokenScale.toFixed(1)}×`;
       return;
@@ -289,8 +385,34 @@ export class BattlePanel extends ApplicationV2 {
   /* ------------------------------------------------------------------------------------------ */
 
   async onClick(ev) {
-    const t = ev.target.closest("[data-tab],[data-layout],[data-biome],[data-act],[data-del],[data-bg-pick],[data-bg-clear],[data-bg-layout],[data-fx]");
+    const t = ev.target.closest("[data-tab],[data-layout],[data-biome],[data-act],[data-del],[data-bg-pick],[data-bg-clear],[data-bg-layout],[data-fx],[data-bgmode],[data-lib],[data-fav],[data-libfav],[data-libclose],[data-bg-lib]");
     if ( !t ) return;
+    if ( t.dataset.fav ) {
+      ev.stopPropagation();
+      await toggleFavorite(t.dataset.fav);
+      return this.renderLibraryGrid();
+    }
+    if ( t.hasAttribute("data-libfav") ) {
+      this.libFav = !this.libFav;
+      t.classList.toggle("active", this.libFav);
+      return this.renderLibraryGrid();
+    }
+    if ( t.hasAttribute("data-libclose") ) {
+      this.root.querySelector(".bfu-libmodal").hidden = true;
+      return;
+    }
+    if ( t.dataset.lib ) return this.pickLibrary(t.dataset.lib);
+    if ( t.dataset.bgLib ) {
+      const [layout, biome] = t.dataset.bgLib.split("|");
+      return this.openLibrary({ type: "biome", layout, biome });
+    }
+    if ( t.dataset.bgmode ) {
+      this.draft = normalizeSetup({ ...this.draft, bgMode: t.dataset.bgmode });
+      saveLastSetup(this.draft);
+      this.renderNew();
+      if ( t.dataset.bgmode === "biblioteca" && !this.draft.bgLib ) return this.openLibrary({ type: "setup" });
+      return;
+    }
     if ( t.dataset.tab ) return this.setTab(t.dataset.tab);
     if ( t.dataset.layout ) {
       this.draft = normalizeSetup({ ...this.draft, layout: t.dataset.layout });
@@ -380,6 +502,12 @@ export class BattlePanel extends ApplicationV2 {
         const scene = game.scenes.get(getBattle().sceneId);
         return scene?.view();
       }
+      case "turns":
+        return TurnControlApp.open();
+      case "openLib":
+        return this.openLibrary({ type: "setup" });
+      case "clearLog":
+        return this.renderEffects();
       default:
     }
   }
@@ -427,6 +555,7 @@ export class BattlePanel extends ApplicationV2 {
           <div class="bfu-btnrow">
             <button type="button" data-act="goto"><i class="fa-solid fa-eye"></i> Ver a cena</button>
             <button type="button" data-act="replay"><i class="fa-solid fa-clone"></i> Rejogar abertura</button>
+            <button type="button" data-act="turns"><i class="fa-solid fa-hourglass-half"></i> Janela de turnos</button>
           </div>
           <h4>Faixas manuais</h4>
           <div class="bfu-btnrow">
@@ -479,7 +608,7 @@ export class BattlePanel extends ApplicationV2 {
       <div class="bfu-bggrid">${Object.entries(BIOMES).map(([k, v]) => {
         const custom = customBackground(layout, k);
         return `<div class="bfu-bg"><img src="${escapeHTML(custom || thumb({ ...base, biome: k }, 280))}" alt=""><div class="bfu-bg-bar"><b>${v.label}</b>${custom ? "<em>imagem própria</em>" : "<em>gerado</em>"}</div>`
-          + `<div class="bfu-btnrow"><button type="button" data-bg-pick="${layout}|${k}"><i class="fa-solid fa-folder-open"></i> Escolher imagem</button>${custom ? `<button type="button" data-bg-clear="${layout}|${k}"><i class="fa-solid fa-rotate-left"></i> Usar o gerado</button>` : ""}</div></div>`;
+          + `<div class="bfu-btnrow"><button type="button" data-bg-lib="${layout}|${k}"><i class="fa-solid fa-images"></i> Da biblioteca</button><button type="button" data-bg-pick="${layout}|${k}" title="Escolher qualquer imagem do servidor"><i class="fa-solid fa-folder-open"></i></button>${custom ? `<button type="button" data-bg-clear="${layout}|${k}"><i class="fa-solid fa-rotate-left"></i> Usar o gerado</button>` : ""}</div></div>`;
       }).join("")}</div>`;
   }
 
@@ -496,6 +625,9 @@ export class BattlePanel extends ApplicationV2 {
       <div class="bfu-mods">
         <span>Sequencer ${yes(b.sequencer)}</span><span>Token Magic FX ${yes(b.tokenmagic)}</span><span>JB2A ${yes(b.jb2a)}</span>
       </div>
+      <div class="bfu-mods"><span>Evento de dano do sistema ${damageHookActive() ? yes(true) : `<b class="bfu-no">indisponível</b> (números vêm das mudanças de PV)`}</span>
+        <span>Cena vista ${isBattleScene(canvas?.scene) ? yes(true) : `<b class="bfu-no">não é de batalha</b>`}</span>
+        <span>Animar fora das batalhas ${setting("animarFora", true) ? yes(true) : `<b class="bfu-no">desligado</b>`}</span></div>
       <p class="bfu-hint">Sem o Sequencer, as animações são desenhadas pelo próprio módulo por cima do mapa. Sem o Token Magic, os tokens não ganham brilho de turno, crise e nocaute.</p>
       <p class="bfu-hint">Teste: selecione o token que age (fonte) e mire (T) os alvos. Sem alvo, o efeito cai na própria fonte.</p>
       <label>Elemento <select data-fx-el>${Object.entries(ELEMENTS).map(([k, v]) => `<option value="${k}"${k === el ? " selected" : ""}>${v.label}</option>`).join("")}</select></label>
@@ -514,6 +646,19 @@ export class BattlePanel extends ApplicationV2 {
         <button type="button" data-fx="defeat"><i class="fa-solid fa-skull"></i> Derrota</button>
       </div>`;
     pane.querySelector("[data-fx-el]").addEventListener("change", ev => (this.fxElement = ev.target.value));
+    const logBox = document.createElement("div");
+    logBox.className = "bfu-log";
+    pane.append(logBox);
+    const draw = () => {
+      const rows = getLog().map(e => `<div class="bfu-log-row${e.kind === "erro" ? " err" : e.kind === "ignorado" ? " skip" : ""}"><time>${new Date(e.at).toLocaleTimeString()}</time>`
+        + `<span>${escapeHTML(e.text ?? "")}</span><em>${escapeHTML([e.how, e.user].filter(Boolean).join(" · "))}</em></div>`).join("");
+      logBox.innerHTML = `<h4>Registro dos últimos eventos</h4>${rows || `<p class="bfu-hint">Nada ainda. Role um ataque ou use os botões acima.</p>`}`;
+    };
+    draw();
+    this.offLog?.();
+    this.offLog = onLog(() => {
+      if ( this.tab === "efeitos" && logBox.isConnected ) draw();
+    });
   }
 
   async testEffect(kind) {
@@ -537,9 +682,16 @@ export class BattlePanel extends ApplicationV2 {
       crisis: { kind: "crisis" },
       defeat: { kind: "defeat" }
     };
-    await playEvent({ ...map[kind], source: s, targets: t });
+    const e = { ...map[kind], source: s, targets: t };
+    const how = await playEvent(e);
+    logEvent({ kind: e.kind, text: `${describe(e)} (teste)`, how });
   }
 }
+
+BattlePanel.prototype._onClose = async function(options) {
+  this.offLog?.();
+  return ApplicationV2.prototype._onClose.call(this, options);
+};
 
 /** Settings-menu entry: opens the panel. */
 export class PanelLauncher extends ApplicationV2 {
