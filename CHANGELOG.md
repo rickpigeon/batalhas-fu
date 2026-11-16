@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.0
+
+Biblioteca de fundos:
+- **Tags**: o mestre etiqueta as imagens (uma a uma pelo ícone de etiqueta, ou várias de uma vez em "Marcar várias"), com sugestões das tags mais usadas.
+- **Busca rápida** por número, nome ou tag (sem acento, pelo começo da palavra, várias palavras juntas) e barra de tags com contagem, mais os filtros "Sem tag" e "Novas".
+- Imagens copiadas depois para `batalhas-fu-fundos/fundos` ou `batalhas-fu-fundos/novos` aparecem na galeria como novas.
+- As tags ficam no mundo e em `batalhas-fu-fundos/tags.json`, valendo para todos os mundos.
+
+Mesa de cartas:
+- 9 tampos de mesa (novos: ébano, mármore, couro, metal rebitado, mesa arcana, mapa antigo) e 9 panos (cores do bioma, feltros, veludos, couro, mapa de campanha ou sem pano).
+- 5 disposições das cartas: uma fileira, leque em arco (cartas inclinadas), escalonado, duas fileiras e frente a frente (colunas lado a lado). As marcações do pano e o brilho do lado da vez seguem a disposição.
+- Cartas geradas com 8 estilos (clássica, cores do bioma, pergaminho, obsidiana, realeza, tecnomagia, natureza, arcana) e 4 desenhos (moldura, arte cheia, medalhão, arco/tarô), com prévia no painel.
+- **Token inteiro**: o token fica como está (para tokens que já são cartas), com só o nome e os contadores por cima.
+- **Contador de Pontos de Inventário (PI)** do grupo nas cartas.
+- Contadores nos cantos ou numa faixa embaixo da carta, escolhendo o que aparece (nome, PV, PM, PI, condições). Dá para mudar durante a batalha.
+
+Clima e mana no meio do combate:
+- Nova janela **Clima e mana da batalha** (controles de Token, janela de turnos, aba Batalha atual), ao vivo para todos.
+- 31 climas para combinar até 6 de uma vez: chuva, garoa, tempestade com relâmpagos, relâmpagos, granizo, goteiras, bolhas, neve, nevasca, tempestade de areia, ventania, poeira, cinzas, brasas, chuva de meteoros, folhas, pétalas, pólen, dentes-de-leão, vaga-lumes, esporos, pássaros, morcegos, neblina, bruma no chão, estrelas, estrelas cadentes, aurora, raios de luz, brilhos mágicos e penas.
+- Até 4 manas no ar ao mesmo tempo, cada uma com brilho no chão e partículas próprias.
+- 11 tons de cena, intensidade, vento com direção e 12 combinações prontas.
+- Clima inicial escolhido na Nova batalha (padrão: o do bioma).
+- "Repintar o fundo" para trocar o brilho de mana pintado no fundo.
+- As partículas antigas do bioma foram trocadas por esse motor de clima (um canvas só, mais leve). Os jogadores veem o clima mesmo com a batalha animada escondida.
+
 ## 1.1.0
 
 Correções:

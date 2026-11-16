@@ -7,20 +7,26 @@
  *   Efeitos        try every animation on the selected/targeted tokens, see which modules are active
  */
 import {
-  BIOMES, ELEMENTS, LAYOUTS, MANA_ELEMENTS, MODULE_ID, MODULE_TITLE, TABLES, TIMES, escapeHTML, isGM
+  ARRANGEMENTS, BIOMES, CARD_DESIGNS, CARD_MODES, CARD_STYLES, COUNTER_POS, ELEMENTS, LAYOUTS, MANA_ELEMENTS, MATS, MODULE_ID,
+  MODULE_TITLE, TABLES, TIMES, escapeHTML, isGM
 } from "./constants.mjs";
 import {
-  customBackground, getBattle, isBattleScene, loadLastSetup, normalizeSetup, saveLastSetup, setCustomBackground, setting
+  battleFlags, customBackground, getBattle, isBattleScene, loadLastSetup, normalizeSetup, saveLastSetup, setCustomBackground, setting
 } from "./store.mjs";
 import { backgroundSVG } from "./backgrounds.mjs";
 import { tableCardSize, tableSlots } from "./layout.mjs";
-import { addToBattle, endBattle, replayIntro, startBattle } from "./battle.mjs";
+import { addToBattle, battleScene, endBattle, replayIntro, setCardDisplay, startBattle } from "./battle.mjs";
+import { cardPreview } from "./cards.mjs";
+import { WEATHER, biomeLayer } from "./climate.mjs";
+import { ClimateApp } from "./climate-app.mjs";
 import { backends, playEvent } from "./fx.mjs";
 import { browse } from "./files.mjs";
 import { HUD } from "./hud.mjs";
 import { SOCKET } from "./constants.mjs";
 import { guard, reportError } from "./errors.mjs";
-import { favorites, libraryFolder, loadLibrary, toggleFavorite } from "./library.mjs";
+import {
+  addTags, allTags, favorites, foldText, libraryFolder, loadLibrary, removeTag, splitTags, tagsOf, toggleFavorite
+} from "./library.mjs";
 import { describe, getLog, logEvent, onLog } from "./log.mjs";
 import { damageHookActive } from "./fu-bridge.mjs";
 import { TurnControlApp } from "./turn-app.mjs";
@@ -30,8 +36,8 @@ const APP_ID = `${MODULE_ID}-painel`;
 const DEFAULT_IMG = "icons/svg/mystery-man.svg";
 
 function thumb(setup, w = 300) {
-  const size = tableCardSize(4, 3);
-  const slots = setup.layout === "mesa" ? { party: tableSlots(4, "party", size), foes: tableSlots(3, "foes", size) } : null;
+  const size = tableCardSize(4, 3, setup.arrangement);
+  const slots = setup.layout === "mesa" ? { party: tableSlots(4, "party", size, setup.arrangement), foes: tableSlots(3, "foes", size, setup.arrangement) } : null;
   const svg = backgroundSVG({ ...setup, slots }, w / 2400);
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -202,9 +208,32 @@ export class BattlePanel extends ApplicationV2 {
     pane.querySelector(".bfu-layouts").innerHTML = Object.entries(LAYOUTS).map(([k, v]) => `<button type="button" class="bfu-layout${d.layout === k ? " active" : ""}" data-layout="${k}"><b>${v.label}</b><small>${v.hint}</small></button>`).join("");
     pane.querySelector(".bfu-biomes").innerHTML = Object.entries(BIOMES).map(([k, v]) => `<button type="button" class="bfu-biome${d.biome === k ? " active" : ""}" data-biome="${k}"><i class="${v.icon}"></i><span>${v.label}</span>${customBackground(d.layout, k) ? `<em title="Fundo próprio">★</em>` : ""}</button>`).join("");
     const manaOpts = [["", "Nenhuma"], ...MANA_ELEMENTS.map(k => [k, ELEMENTS[k].label])].map(([k, l]) => `<option value="${k}"${d.mana === k ? " selected" : ""}>${l}</option>`).join("");
+    const opts = (table, cur) => Object.entries(table).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${escapeHTML(l)}</option>`).join("");
     const variant = d.layout === "mesa"
-      ? `<label>Mesa <select name="table">${Object.entries(TABLES).map(([k, l]) => `<option value="${k}"${d.table === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>`
-      : `<label>Hora <select name="time">${Object.entries(TIMES).map(([k, l]) => `<option value="${k}"${d.time === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>`;
+      ? `<label>Mesa <select name="table">${opts(TABLES, d.table)}</select></label>
+        <label>Pano <select name="mat">${opts(MATS, d.mat)}</select></label>
+        <label>Disposição <select name="arrangement">${opts(ARRANGEMENTS, d.arrangement)}</select></label>`
+      : `<label>Hora <select name="time">${opts(TIMES, d.time)}</select></label>`;
+    const weatherOpts = [["", `Do bioma (${WEATHER[biomeLayer(d.biome)]?.label ?? "—"})`], ["nenhum", "Nenhum"], ...Object.entries(WEATHER).map(([k, w]) => [k, w.label])]
+      .map(([k, l]) => `<option value="${k}"${d.weather === k ? " selected" : ""}>${escapeHTML(l)}</option>`).join("");
+    const info = d.cardInfo;
+    const cards = d.layout === "mesa" ? `
+      <fieldset class="bfu-cardopts"><legend><i class="fa-solid fa-id-card"></i> Cartas</legend>
+        <label>Na mesa <select name="cardMode">${opts(CARD_MODES, d.cardMode)}</select></label>
+        ${d.cardMode === "gerada" ? `<div class="bfu-cardlook"><div class="bfu-cardlook-fields">
+          <label>Estilo <select name="cardStyle">${opts(CARD_STYLES, d.cardStyle)}</select></label>
+          <label>Desenho <select name="cardDesign">${opts(CARD_DESIGNS, d.cardDesign)}</select></label></div>
+          <img class="bfu-cardprev" alt="Prévia da carta"></div>` : `<p class="bfu-hint">O token fica inteiro, do jeito que está (ótimo para tokens que já são cartas). Por cima vão só o nome e os contadores.</p>`}
+        <label>Contadores <select name="counters">${opts(COUNTER_POS, d.counters)}</select></label>
+        <div class="bfu-checkrow">
+          <label class="bfu-check"><input type="checkbox" name="cardInfo.name"${info.name ? " checked" : ""}> Nome</label>
+          <label class="bfu-check"><input type="checkbox" name="cardInfo.hp"${info.hp ? " checked" : ""}> PV</label>
+          <label class="bfu-check"><input type="checkbox" name="cardInfo.mp"${info.mp ? " checked" : ""}> PM</label>
+          <label class="bfu-check"><input type="checkbox" name="cardInfo.ip"${info.ip ? " checked" : ""}> PI</label>
+          <label class="bfu-check"><input type="checkbox" name="cardInfo.status"${info.status ? " checked" : ""}> Condições</label>
+        </div>
+        ${d.cardMode === "gerada" && d.counters === "cantos" ? `<p class="bfu-hint">Na carta gerada o nome já vem desenhado; nos cantos ficam PV, PM e PI.</p>` : ""}
+      </fieldset>` : "";
     const lib = d.bgMode === "biblioteca";
     const custom = customBackground(d.layout, d.biome);
     const libItem = this.libItems?.find(x => x.src === d.bgLib);
@@ -222,12 +251,14 @@ export class BattlePanel extends ApplicationV2 {
         <button type="button" data-bgmode="biblioteca" class="${lib ? "active" : ""}">Biblioteca</button></div></div>
       ${libBlock}${focus}${variant}
       <label>Mana no ar <select name="mana">${manaOpts}</select></label>
+      <label>Clima <select name="weather">${weatherOpts}</select></label>
       <label>Variação <span class="bfu-inline"><input type="number" name="seed" min="1" max="99999" value="${d.seed}"><button type="button" data-act="dice" title="Sortear"><i class="fa-solid fa-dice"></i></button></span></label>
       ${d.layout === "campo" ? `<label>Tamanho dos tokens <span class="bfu-inline"><input type="range" name="tokenScale" min="0.8" max="2.6" step="0.1" value="${d.tokenScale}"><output>${d.tokenScale.toFixed(1)}×</output></span></label>
       <label class="bfu-check"><input type="checkbox" name="mirrorParty"${d.mirrorParty ? " checked" : ""}> Espelhar o grupo</label>
       <label class="bfu-check"><input type="checkbox" name="mirrorFoes"${d.mirrorFoes ? " checked" : ""}> Espelhar os inimigos</label>` : ""}
-      ${custom && !lib ? `<p class="bfu-hint">★ Este bioma usa um fundo próprio (aba Fundos).</p>` : ""}`;
+      ${custom && !lib ? `<p class="bfu-hint">★ Este bioma usa um fundo próprio (aba Fundos).</p>` : ""}${cards}`;
     this.renderPreview();
+    this.renderCardPreview();
     pane.querySelector(".bfu-party").innerHTML = (this.party ?? []).map(p => `<label class="bfu-who${p.on ? " on" : ""}"><input type="checkbox" data-party="${p.key}"${p.on ? " checked" : ""}><img src="${escapeHTML(p.img)}" alt=""><span>${escapeHTML(p.name)}</span></label>`).join("")
       || `<p class="bfu-hint">Nenhum personagem de jogador no mundo.</p>`;
     pane.querySelector(".bfu-foes").innerHTML = this.foes.map(f => `<div class="bfu-who on"><img src="${escapeHTML(f.img)}" alt=""><span>${escapeHTML(f.name)}${f.ref.kind === "token" ? ` <small title="Token da cena (mantém os PV)">token</small>` : ""}</span>`
@@ -240,6 +271,25 @@ export class BattlePanel extends ApplicationV2 {
     const start = pane.querySelector(".bfu-start");
     start.disabled = getBattle().active || this.busy;
     start.title = getBattle().active ? "Encerre a batalha atual antes" : "";
+  }
+
+  /** A small sample of the generated card with the chosen style and design. */
+  renderCardPreview() {
+    const img = this.root.querySelector(".bfu-cardprev");
+    if ( !img ) return;
+    const d = this.draft;
+    const portrait = (this.party ?? []).find(p => p.on)?.img ?? DEFAULT_IMG;
+    const name = (this.party ?? []).find(p => p.on)?.name ?? "Exemplo";
+    const key = [d.cardStyle, d.cardDesign, d.biome, portrait].join("|");
+    if ( this.cardPrev?.key === key ) {
+      img.src = this.cardPrev.url;
+      return;
+    }
+    cardPreview({ style: d.cardStyle, design: d.cardDesign, biome: d.biome }, "party", portrait, name).then(url => {
+      this.cardPrev = { key, url };
+      const el = this.root.querySelector(".bfu-cardprev");
+      if ( el ) el.src = url;
+    }).catch(err => console.warn(`${MODULE_ID} | prévia da carta`, err));
   }
 
   renderPreview() {
@@ -271,6 +321,10 @@ export class BattlePanel extends ApplicationV2 {
     this.libTarget = target;
     this.libFav = this.libFav ?? false;
     this.libQuery = "";
+    this.libTags = new Set();
+    this.libMark = false;
+    this.libSel = new Set();
+    this.libEdit = [];
     let modal = this.root.querySelector(".bfu-libmodal");
     if ( !modal ) {
       modal = document.createElement("div");
@@ -281,13 +335,21 @@ export class BattlePanel extends ApplicationV2 {
         this.libQuery = ev.target.value.trim();
         this.renderLibraryGrid();
       });
+      modal.addEventListener("keydown", guard(ev => {
+        if ( ev.key !== "Enter" || !ev.target.matches(".bfu-taginput") ) return;
+        ev.preventDefault();
+        return this.applyTagInput();
+      }, "tags"));
     }
     modal.hidden = false;
     modal.innerHTML = `<div class="bfu-libbox"><header><b><i class="fa-solid fa-images"></i> Biblioteca de fundos</b>
-        <input type="search" class="bfu-libsearch" placeholder="Número…">
+        <input type="search" class="bfu-libsearch" placeholder="Número, nome ou tag…" title="Separe várias palavras com espaço: todas precisam combinar">
         <button type="button" data-libfav class="${this.libFav ? "active" : ""}"><i class="fa-solid fa-star"></i> Favoritos</button>
+        <button type="button" data-libmark title="Escolher várias imagens para pôr ou tirar tags de uma vez"><i class="fa-solid fa-tags"></i> Marcar várias</button>
         <button type="button" data-libclose title="Fechar"><i class="fa-solid fa-xmark"></i></button></header>
-        <div class="bfu-libgrid"><p class="bfu-hint"><i class="fa-solid fa-spinner fa-spin"></i> Carregando…</p></div></div>`;
+        <div class="bfu-tagbar"></div>
+        <div class="bfu-libgrid"><p class="bfu-hint"><i class="fa-solid fa-spinner fa-spin"></i> Carregando…</p></div>
+        <div class="bfu-tagedit" hidden></div></div>`;
     this.libItems = await loadLibrary(true);
     this.renderLibraryGrid();
   }
@@ -302,13 +364,85 @@ export class BattlePanel extends ApplicationV2 {
       return;
     }
     const fav = favorites();
-    const q = this.libQuery;
-    const list = items.filter(x => (!this.libFav || fav.has(x.src)) && (!q || String(x.n).includes(q) || x.name.toLowerCase().includes(q.toLowerCase())));
+    const terms = this.libQuery.split(/[\s,]+/).map(foldText).filter(Boolean);
+    const chips = this.libTags;
+    const match = x => {
+      const tags = tagsOf(x.src);
+      if ( this.libFav && !fav.has(x.src) ) return false;
+      if ( chips.has("__sem") && tags.length ) return false;
+      if ( chips.has("__novas") && !x.novo ) return false;
+      for ( const c of chips ) if ( !c.startsWith("__") && !tags.includes(c) ) return false;
+      const folded = tags.map(foldText);
+      const name = foldText(x.name);
+      return terms.every(t => (/^\d+$/.test(t) ? String(x.n).includes(t) : false) || name.includes(t) || folded.some(tag => tag.includes(t)));
+    };
+    const list = items.filter(match);
+    this.libVisible = list.map(x => x.src);
     const current = this.libTarget?.type === "setup" ? this.draft.bgLib : customBackground(this.libTarget?.layout, this.libTarget?.biome);
-    grid.innerHTML = list.map(x => `<div class="bfu-libitem${x.src === current ? " active" : ""}" data-lib="${escapeHTML(x.src)}" title="${escapeHTML(x.name)}">`
-      + `<img loading="lazy" src="${escapeHTML(x.thumb)}" alt=""><span>${x.n}</span>`
-      + `<button type="button" class="bfu-star${fav.has(x.src) ? " on" : ""}" data-fav="${escapeHTML(x.src)}" title="Favorito"><i class="fa-solid fa-star"></i></button></div>`).join("")
-      || `<p class="bfu-hint">Nada encontrado.</p>`;
+    grid.classList.toggle("marking", this.libMark);
+    grid.innerHTML = list.map(x => {
+      const tags = tagsOf(x.src);
+      const shown = tags.slice(0, 3).map(t => `<em>${escapeHTML(t)}</em>`).join("") + (tags.length > 3 ? `<em>+${tags.length - 3}</em>` : "");
+      const sel = this.libSel.has(x.src) || (this.libEdit.length === 1 && this.libEdit[0] === x.src);
+      return `<div class="bfu-libitem${x.src === current ? " active" : ""}${sel ? " selected" : ""}" data-lib="${escapeHTML(x.src)}" title="${escapeHTML(x.name)}${tags.length ? ` · ${escapeHTML(tags.join(", "))}` : ""}">`
+        + `<img loading="lazy" src="${escapeHTML(x.thumb)}" alt=""><span>${x.n}${x.novo ? " · nova" : ""}</span>`
+        + (shown ? `<div class="bfu-libtags">${shown}</div>` : "")
+        + `<button type="button" class="bfu-tagbtn" data-tagbtn="${escapeHTML(x.src)}" title="Tags desta imagem"><i class="fa-solid fa-tag"></i></button>`
+        + `<button type="button" class="bfu-star${fav.has(x.src) ? " on" : ""}" data-fav="${escapeHTML(x.src)}" title="Favorito"><i class="fa-solid fa-star"></i></button></div>`;
+    }).join("") || `<p class="bfu-hint">Nada encontrado.</p>`;
+    this.renderTagBar();
+    this.renderTagEditor();
+  }
+
+  /** Quick filters: every tag in use (click to filter), untagged, new images. */
+  renderTagBar() {
+    const bar = this.root.querySelector(".bfu-tagbar");
+    if ( !bar ) return;
+    const items = this.libItems ?? [];
+    const untagged = items.filter(x => !tagsOf(x.src).length).length;
+    const fresh = items.filter(x => x.novo).length;
+    const chip = (key, label, n) => `<button type="button" class="bfu-tagchip${this.libTags.has(key) ? " active" : ""}" data-tagchip="${escapeHTML(key)}">${escapeHTML(label)} <small>${n}</small></button>`;
+    bar.innerHTML = [chip("__sem", "Sem tag", untagged), fresh ? chip("__novas", "Novas", fresh) : "", ...allTags().map(([t, n]) => chip(t, t, n))].join("")
+      + (this.libTags.size ? `<button type="button" class="bfu-tagchip clear" data-tagchip="__limpar"><i class="fa-solid fa-xmark"></i> limpar filtros</button>` : "");
+  }
+
+  /** The tag editor: one image (tag button) or several (Marcar várias). */
+  renderTagEditor() {
+    const box = this.root.querySelector(".bfu-tagedit");
+    if ( !box ) return;
+    const srcs = this.libMark ? [...this.libSel] : this.libEdit;
+    if ( !this.libMark && !srcs.length ) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    const count = new Map();
+    for ( const src of srcs ) for ( const t of tagsOf(src) ) count.set(t, (count.get(t) ?? 0) + 1);
+    const item = srcs.length === 1 ? this.libItems?.find(x => x.src === srcs[0]) : null;
+    const title = this.libMark ? (srcs.length ? `${srcs.length} imagem(ns) marcada(s)` : "Clique nas imagens para marcar") : item ? `Fundo ${item.n}` : "";
+    const present = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => `<span class="bfu-tagpill">${escapeHTML(t)}${srcs.length > 1 ? ` <small>${n}/${srcs.length}</small>` : ""}<button type="button" data-tagdel="${escapeHTML(t)}" title="Tirar esta tag"><i class="fa-solid fa-xmark"></i></button></span>`).join("");
+    const suggest = allTags().filter(([t]) => !count.has(t)).slice(0, 14).map(([t]) => `<button type="button" class="bfu-tagchip" data-tagadd="${escapeHTML(t)}">+ ${escapeHTML(t)}</button>`).join("");
+    box.innerHTML = `<div class="bfu-tagedit-head">${item ? `<img src="${escapeHTML(item.thumb)}" alt="">` : `<i class="fa-solid fa-tags"></i>`}<b>${escapeHTML(title)}</b>
+        ${this.libMark ? `<button type="button" data-selall>Marcar as visíveis</button><button type="button" data-selnone>Desmarcar</button>` : ""}
+        <button type="button" data-tagclose title="Fechar"><i class="fa-solid fa-check"></i> Pronto</button></div>
+      <div class="bfu-tagedit-row">${present || `<span class="bfu-hint">${srcs.length ? "Sem tags ainda." : ""}</span>`}</div>
+      <div class="bfu-tagedit-row"><input type="text" class="bfu-taginput" placeholder="Nova tag (várias: separe por vírgula) e Enter"${srcs.length ? "" : " disabled"}>
+        <button type="button" data-tagapply${srcs.length ? "" : " disabled"}><i class="fa-solid fa-plus"></i> Adicionar</button></div>
+      ${suggest && srcs.length ? `<div class="bfu-tagedit-row suggest">${suggest}</div>` : ""}`;
+  }
+
+  editTargets() {
+    return this.libMark ? [...this.libSel] : this.libEdit;
+  }
+
+  async applyTagInput() {
+    const input = this.root.querySelector(".bfu-taginput");
+    const tags = splitTags(input?.value);
+    const srcs = this.editTargets();
+    if ( !tags.length || !srcs.length ) return;
+    await addTags(srcs, tags);
+    this.renderLibraryGrid();
+    this.root.querySelector(".bfu-taginput")?.focus();
   }
 
   async pickLibrary(src) {
@@ -337,9 +471,13 @@ export class BattlePanel extends ApplicationV2 {
       return;
     }
     if ( el.dataset.bg ) return;
+    if ( el.dataset.live ) return this.onLiveCards(el);
     if ( this.tab !== "nova" || !el.name ) return;
     const d = { ...this.draft };
-    d[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.type === "range" ? Number(el.value) : el.value;
+    if ( el.name.startsWith("cardInfo.") ) d.cardInfo = { ...d.cardInfo, [el.name.slice(9)]: el.checked };
+    else d[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.type === "range" ? Number(el.value) : el.value;
+    /* a whole token reads best with the strip under it, a generated card with the corner badges */
+    if ( el.name === "cardMode" ) d.counters = el.value === "token" ? "faixa" : "cantos";
     this.draft = normalizeSetup(d);
     saveLastSetup(this.draft);
     if ( el.name === "bgFocus" ) {
@@ -351,7 +489,16 @@ export class BattlePanel extends ApplicationV2 {
       el.nextElementSibling.textContent = `${this.draft.tokenScale.toFixed(1)}×`;
       return;
     }
-    if ( ["time", "table", "mana", "seed"].includes(el.name) ) this.renderPreview();
+    if ( ["time", "table", "mana", "seed", "mat", "arrangement"].includes(el.name) ) this.renderPreview();
+    if ( ["cardMode", "counters"].includes(el.name) ) this.renderNew();
+    if ( ["cardStyle", "cardDesign"].includes(el.name) ) this.renderCardPreview();
+  }
+
+  /** Batalha atual: counters on the table cards, live. */
+  async onLiveCards(el) {
+    const flags = battleFlags(battleScene()) ?? {};
+    if ( el.name === "counters" ) await setCardDisplay({ counters: el.value });
+    else if ( el.name.startsWith("cardInfo.") ) await setCardDisplay({ cardInfo: { ...(flags.cardInfo ?? {}), [el.name.slice(9)]: el.checked } });
   }
 
   addFoe(ref, name, img) {
@@ -385,8 +532,60 @@ export class BattlePanel extends ApplicationV2 {
   /* ------------------------------------------------------------------------------------------ */
 
   async onClick(ev) {
-    const t = ev.target.closest("[data-tab],[data-layout],[data-biome],[data-act],[data-del],[data-bg-pick],[data-bg-clear],[data-bg-layout],[data-fx],[data-bgmode],[data-lib],[data-fav],[data-libfav],[data-libclose],[data-bg-lib]");
+    const t = ev.target.closest("[data-tab],[data-layout],[data-biome],[data-act],[data-del],[data-bg-pick],[data-bg-clear],[data-bg-layout],[data-fx],[data-bgmode],[data-lib],[data-fav],[data-libfav],[data-libclose],[data-bg-lib],[data-tagbtn],[data-tagchip],[data-tagdel],[data-tagadd],[data-tagapply],[data-tagclose],[data-libmark],[data-selall],[data-selnone]");
     if ( !t ) return;
+    if ( t.dataset.tagbtn ) {
+      ev.stopPropagation();
+      this.libMark = false;
+      this.libSel.clear();
+      this.libEdit = [t.dataset.tagbtn];
+      this.root.querySelector("[data-libmark]")?.classList.remove("active");
+      this.renderLibraryGrid();
+      return this.root.querySelector(".bfu-taginput")?.focus();
+    }
+    if ( t.dataset.tagchip ) {
+      const k = t.dataset.tagchip;
+      if ( k === "__limpar" ) this.libTags.clear();
+      else if ( this.libTags.has(k) ) this.libTags.delete(k);
+      else this.libTags.add(k);
+      return this.renderLibraryGrid();
+    }
+    if ( t.dataset.tagdel ) {
+      await removeTag(this.editTargets(), t.dataset.tagdel);
+      return this.renderLibraryGrid();
+    }
+    if ( t.dataset.tagadd ) {
+      await addTags(this.editTargets(), [t.dataset.tagadd]);
+      return this.renderLibraryGrid();
+    }
+    if ( t.hasAttribute("data-tagapply") ) return this.applyTagInput();
+    if ( t.hasAttribute("data-tagclose") ) {
+      this.libEdit = [];
+      this.libMark = false;
+      this.libSel.clear();
+      this.root.querySelector("[data-libmark]")?.classList.remove("active");
+      return this.renderLibraryGrid();
+    }
+    if ( t.hasAttribute("data-libmark") ) {
+      this.libMark = !this.libMark;
+      this.libSel.clear();
+      this.libEdit = [];
+      t.classList.toggle("active", this.libMark);
+      return this.renderLibraryGrid();
+    }
+    if ( t.hasAttribute("data-selall") ) {
+      for ( const src of this.libVisible ?? [] ) this.libSel.add(src);
+      return this.renderLibraryGrid();
+    }
+    if ( t.hasAttribute("data-selnone") ) {
+      this.libSel.clear();
+      return this.renderLibraryGrid();
+    }
+    if ( t.dataset.lib && this.libMark ) {
+      if ( this.libSel.has(t.dataset.lib) ) this.libSel.delete(t.dataset.lib);
+      else this.libSel.add(t.dataset.lib);
+      return this.renderLibraryGrid();
+    }
     if ( t.dataset.fav ) {
       ev.stopPropagation();
       await toggleFavorite(t.dataset.fav);
@@ -504,6 +703,8 @@ export class BattlePanel extends ApplicationV2 {
       }
       case "turns":
         return TurnControlApp.open();
+      case "climate":
+        return ClimateApp.open();
       case "openLib":
         return this.openLibrary({ type: "setup" });
       case "clearLog":
@@ -556,7 +757,9 @@ export class BattlePanel extends ApplicationV2 {
             <button type="button" data-act="goto"><i class="fa-solid fa-eye"></i> Ver a cena</button>
             <button type="button" data-act="replay"><i class="fa-solid fa-clone"></i> Rejogar abertura</button>
             <button type="button" data-act="turns"><i class="fa-solid fa-hourglass-half"></i> Janela de turnos</button>
+            <button type="button" data-act="climate"><i class="fa-solid fa-cloud-sun-rain"></i> Clima e mana…</button>
           </div>
+          ${this.liveCardsHTML(scene)}
           <h4>Faixas manuais</h4>
           <div class="bfu-btnrow">
             <button type="button" data-act="bannerParty">Vez do grupo</button>
@@ -578,6 +781,24 @@ export class BattlePanel extends ApplicationV2 {
         <label class="bfu-check"><input type="checkbox" name="deleteScene"> Apagar a cena da batalha</label>
         <button type="button" class="bfu-danger" data-act="end"><i class="fa-solid fa-flag-checkered"></i> Encerrar batalha</button>
       </fieldset>`;
+  }
+
+  /** Counters on the table cards, changed live during the battle. */
+  liveCardsHTML(scene) {
+    const f = battleFlags(scene) ?? {};
+    if ( f.layout !== "mesa" ) return "";
+    const i = f.cardInfo ?? {};
+    const on = k => (i[k] !== false ? " checked" : "");
+    const pos = f.counters === "faixa" ? "faixa" : "cantos";
+    return `<h4>Cartas na mesa</h4>
+      <label>Contadores <select name="counters" data-live="1">${Object.entries(COUNTER_POS).map(([k, l]) => `<option value="${k}"${pos === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+      <div class="bfu-checkrow">
+        <label class="bfu-check"><input type="checkbox" data-live="1" name="cardInfo.name"${on("name")}> Nome</label>
+        <label class="bfu-check"><input type="checkbox" data-live="1" name="cardInfo.hp"${on("hp")}> PV</label>
+        <label class="bfu-check"><input type="checkbox" data-live="1" name="cardInfo.mp"${on("mp")}> PM</label>
+        <label class="bfu-check"><input type="checkbox" data-live="1" name="cardInfo.ip"${on("ip")}> PI</label>
+        <label class="bfu-check"><input type="checkbox" data-live="1" name="cardInfo.status"${on("status")}> Condições</label>
+      </div>`;
   }
 
   async end() {

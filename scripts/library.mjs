@@ -4,11 +4,15 @@
  * the folder into the Foundry Data folder. With an indice.json (made by the module's tools) the gallery
  * shows small thumbnails; without it, the images of the folder are listed through the file picker.
  *
+ * Images copied later into <folder>/fundos (or <folder>/novos) show up too, marked as new.
+ * Tags: the GM tags images for the quick search. They are kept in the world (setting tagsFundos) and in
+ * <folder>/tags.json, so every world of this Foundry sees them; the newer of the two wins.
+ *
  * Any image background (library or custom) is fitted to the 16:9 battle scene: scaled to cover, cropped
  * at the chosen height ("focus"), with the time-of-day tint, mana motes and a vignette on top, then
  * uploaded once to worlds/<world>/batalhas-fu/fundos.
  */
-import { MODULE_ID, SCENE_H, SCENE_W, hash } from "./constants.mjs";
+import { MODULE_ID, SCENE_H, SCENE_W, hash, isGM } from "./constants.mjs";
 import { cachedBackground, rememberBackground, setting } from "./store.mjs";
 import { canvasToBlob, filePickerClass, listFolder, loadImage, rootFolder, uploadBlob } from "./files.mjs";
 import { overlaySVG } from "./backgrounds.mjs";
@@ -41,8 +45,23 @@ export async function loadLibrary(force = false) {
       }));
     }
   } catch ( err ) { /* no index: browse below */ }
+  const FP = filePickerClass();
+  if ( items.length ) {
+    /* images copied into the folder after the index was made */
+    const known = new Set(items.map(x => x.src));
+    let n = Math.max(0, ...items.map(x => x.n));
+    for ( const dir of [`${folder}/fundos`, `${folder}/novos`] ) {
+      try {
+        const res = await FP.browse("data", dir);
+        for ( const f of res?.files ?? [] ) {
+          if ( !/\.(jpe?g|png|webp|avif)$/i.test(f) || known.has(f) || known.has(safeDecode(f)) ) continue;
+          items.push({ n: ++n, src: f, thumb: f, name: safeDecode(String(f).split("/").pop()), w: 0, h: 0, novo: true });
+          known.add(f);
+        }
+      } catch ( err ) { /* folder missing */ }
+    }
+  }
   if ( !items.length ) {
-    const FP = filePickerClass();
     for ( const dir of [folder, `${folder}/fundos`] ) {
       try {
         const res = await FP.browse("data", dir);
@@ -54,7 +73,94 @@ export async function loadLibrary(force = false) {
     }
   }
   cache = { folder, items };
+  if ( isGM() ) await importTagFile(folder);
   return items;
+}
+
+function safeDecode(v) {
+  try {
+    return decodeURIComponent(v);
+  } catch ( err ) {
+    return v;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------- */
+/* Tags                                                                                             */
+/* ---------------------------------------------------------------------------------------------- */
+
+const MAX_TAGS = 20;
+/** A tag as stored: lower case, single spaces, at most 30 characters. */
+export const normTag = t => String(t ?? "").trim().toLowerCase().replace(/[\s,;]+/g, " ").slice(0, 30).trim();
+/** For searching: no accents. */
+export const foldText = t => String(t ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+/** Key of an image in the tag map: its path inside the library folder. */
+function keyOf(src) {
+  const folder = libraryFolder();
+  const s = safeDecode(String(src ?? ""));
+  return s.startsWith(`${folder}/`) ? s.slice(folder.length + 1) : s;
+}
+
+export function tagState() {
+  const v = setting("tagsFundos", { at: 0, map: {} }) ?? {};
+  return { at: Number(v.at) || 0, map: v.map && typeof v.map === "object" ? v.map : {} };
+}
+
+export function tagsOf(src) {
+  const list = tagState().map[keyOf(src)];
+  return Array.isArray(list) ? list : [];
+}
+
+/** Every tag in use with how many images have it, most used first. */
+export function allTags() {
+  const count = new Map();
+  for ( const list of Object.values(tagState().map) ) for ( const t of Array.isArray(list) ? list : [] ) count.set(t, (count.get(t) ?? 0) + 1);
+  return [...count.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+/** Change the tags of some images: fn(current tags) -> new tags. */
+export async function editTags(srcs, fn) {
+  const st = tagState();
+  const map = { ...st.map };
+  for ( const src of srcs ) {
+    const k = keyOf(src);
+    const next = [...new Set(fn(Array.isArray(map[k]) ? map[k] : []).map(normTag).filter(Boolean))].slice(0, MAX_TAGS);
+    if ( next.length ) map[k] = next;
+    else delete map[k];
+  }
+  const value = { at: Date.now(), map };
+  await game.settings.set(MODULE_ID, "tagsFundos", value);
+  scheduleExport(value);
+  return value;
+}
+
+/** "floresta, noite chuvosa" -> ["floresta", "noite chuvosa"] */
+export const splitTags = text => String(text ?? "").split(/[,;]+/).map(normTag).filter(Boolean);
+export const addTags = (srcs, tags) => editTags(srcs, cur => [...cur, ...tags]);
+export const removeTag = (srcs, tag) => editTags(srcs, cur => cur.filter(t => t !== normTag(tag)));
+
+let exportTimer = null;
+function scheduleExport(value) {
+  clearTimeout(exportTimer);
+  exportTimer = setTimeout(() => exportTags(value).catch(err => console.warn(`${MODULE_ID} | tags.json`, err)), 1500);
+}
+
+/** Write <folder>/tags.json (shared by every world). */
+export async function exportTags(value = tagState()) {
+  const blob = new Blob([JSON.stringify({ version: 1, at: value.at, map: value.map })], { type: "application/json" });
+  await uploadBlob(blob, libraryFolder(), "tags.json");
+}
+
+/** Take the tags of <folder>/tags.json when they are newer than this world's. */
+async function importTagFile(folder) {
+  try {
+    const res = await fetch(new URL(`${folder}/tags.json`, document.baseURI).href, { cache: "no-cache" });
+    if ( !res.ok ) return;
+    const data = await res.json();
+    const at = Number(data?.at) || 0;
+    if ( at > tagState().at && data.map && typeof data.map === "object" ) await game.settings.set(MODULE_ID, "tagsFundos", { at, map: data.map });
+  } catch ( err ) { /* no file yet */ }
 }
 
 export function favorites() {

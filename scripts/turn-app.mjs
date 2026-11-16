@@ -132,6 +132,7 @@ export class TurnControlApp extends ApplicationV2 {
           <div class="bfu-t-btns small">
             <button type="button" data-t="bannerParty">Faixa: grupo</button>
             <button type="button" data-t="bannerFoes">Faixa: inimigos</button>
+            <button type="button" data-t="climate" title="Clima e mana da batalha"><i class="fa-solid fa-cloud-sun-rain"></i> Clima</button>
             <button type="button" data-t="panel" title="Painel do Batalhas FU"><i class="fa-solid fa-gear"></i></button>
           </div>
         </footer>`;
@@ -147,6 +148,7 @@ export class TurnControlApp extends ApplicationV2 {
     const info = combatInfo(combat);
     const t = el.dataset.t;
     if ( t === "panel" ) return (await import("./panel-app.mjs")).BattlePanel.open("atual");
+    if ( t === "climate" ) return (await import("./climate-app.mjs")).ClimateApp.open();
     if ( t === "bannerParty" || t === "bannerFoes" ) {
       const kind = t === "bannerParty" ? "party" : "foes";
       const title = kind === "party" ? "Vez do grupo" : "Vez dos inimigos";

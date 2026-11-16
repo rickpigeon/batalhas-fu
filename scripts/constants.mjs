@@ -61,10 +61,71 @@ export const TIMES = {
   noite: "Noite"
 };
 
+/** Table top (what is around the play mat). */
 export const TABLES = {
   escura: "Madeira escura",
   clara: "Madeira clara",
-  pedra: "Mesa de pedra"
+  ebano: "Ébano avermelhado",
+  pedra: "Mesa de pedra",
+  marmore: "Mármore",
+  couro: "Couro",
+  metal: "Metal rebitado",
+  arcano: "Mesa arcana (runas)",
+  pergaminho: "Mapa antigo"
+};
+
+/** Play mat (the cloth where the cards lie). */
+export const MATS = {
+  bioma: "Cores do bioma",
+  verde: "Feltro verde",
+  vinho: "Feltro vinho",
+  azul: "Veludo azul",
+  roxo: "Veludo roxo",
+  preto: "Feltro preto",
+  couro: "Couro curtido",
+  mapa: "Mapa de campanha",
+  nenhum: "Sem pano"
+};
+
+/** How the cards of each side are laid on the table. */
+export const ARRANGEMENTS = {
+  linha: "Uma fileira por lado",
+  leque: "Leque (em arco)",
+  escalonado: "Escalonado (zigue-zague)",
+  grade: "Duas fileiras por lado",
+  colunas: "Frente a frente (lado a lado)"
+};
+
+/** Look of the generated cards. */
+export const CARD_STYLES = {
+  classica: "Clássica (azul × vermelho)",
+  bioma: "Cores do bioma",
+  pergaminho: "Pergaminho",
+  obsidiana: "Obsidiana",
+  realeza: "Realeza (marfim e ouro)",
+  tecno: "Tecnomagia",
+  natureza: "Natureza",
+  arcana: "Arcana"
+};
+
+/** Layout of the generated card face. */
+export const CARD_DESIGNS = {
+  moldura: "Moldura (retrato e placa de nome)",
+  arte: "Arte cheia (nome na faixa)",
+  medalhao: "Medalhão (retrato redondo)",
+  arco: "Arco (estilo tarô)"
+};
+
+/** What goes on the table for each combatant. */
+export const CARD_MODES = {
+  gerada: "Carta gerada (moldura, retrato e nome)",
+  token: "Token inteiro (só nome e contadores)"
+};
+
+/** Where the counters (HP, MP, IP) and the name go on a card. */
+export const COUNTER_POS = {
+  cantos: "Nos cantos da carta",
+  faixa: "Numa faixa embaixo da carta"
 };
 
 export const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, c => (

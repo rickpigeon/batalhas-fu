@@ -17,7 +17,8 @@ import { combatInfo, combatOfScene } from "./fu-data.mjs";
 import { BattlePanel, PanelLauncher } from "./panel-app.mjs";
 import { TurnControlApp, autoOpenTurns } from "./turn-app.mjs";
 import { describe, logEvent, receiveLog } from "./log.mjs";
-import { addToBattle, endBattle, replayIntro, startBattle } from "./battle.mjs";
+import { addToBattle, endBattle, repaintBackground, replayIntro, setCardDisplay, setClimate, startBattle } from "./battle.mjs";
+import { ClimateApp } from "./climate-app.mjs";
 import { reportError, watchUncaught } from "./errors.mjs";
 
 Hooks.once("init", () => {
@@ -81,6 +82,14 @@ Hooks.once("ready", () => {
       intro: () => replayIntro(),
       /** Play an animation (GM): { kind, source, targets, element, style, ... }. */
       play: event => playEvent(event),
+      /** Open the GM weather window. */
+      climaJanela: () => ClimateApp.open(),
+      /** Weather and mana of the running battle: { mana: ["fire"], layers: ["chuva"], tint: "noite", intensity: 1, wind: 0 }. */
+      clima: climate => setClimate(climate),
+      /** Counters on the table cards: { counters: "cantos" | "faixa", cardInfo: { name, hp, mp, ip, status } }. */
+      cartas: opts => setCardDisplay(opts),
+      /** Paint the battle background again with another mana ("" = none). */
+      repintar: mana => repaintBackground(mana),
       /** The running battle (copy) and which effect modules are active. */
       state: () => getBattle(),
       backends: () => backends()
@@ -116,6 +125,10 @@ Hooks.on("updateScene", (scene, changed) => {
   if ( !flags ) return;
   if ( "intro" in flags ) maybePlayIntro(scene);
   if ( "battle" in flags ) HUD.refresh();
+  if ( "clima" in flags ) {
+    HUD.ensureAmbient();
+    ClimateApp.refresh();
+  }
 });
 
 /* ---------------------------------------------------------------------------------------------- */
@@ -211,6 +224,15 @@ Hooks.on("getSceneControlButtons", controls => {
     button: true,
     visible: true,
     onChange: () => BattlePanel.open()
+  };
+  tokens.tools.batalhasFUClima = {
+    name: "batalhasFUClima",
+    title: "Clima e mana da batalha",
+    icon: "fa-solid fa-cloud-sun-rain",
+    order: Object.keys(tokens.tools).length,
+    button: true,
+    visible: true,
+    onChange: () => ClimateApp.open()
   };
   tokens.tools.batalhasFUTurnos = {
     name: "batalhasFUTurnos",

@@ -5,7 +5,10 @@
  * cacheFundos (generated backgrounds already uploaded), plus the options shown in Configure Settings.
  * Client: ambiente (biome particles on this screen).
  */
-import { BIOMES, LAYOUTS, MODULE_ID, TABLES, TIMES, bool, num, pick, str } from "./constants.mjs";
+import {
+  ARRANGEMENTS, BIOMES, CARD_DESIGNS, CARD_MODES, CARD_STYLES, COUNTER_POS, LAYOUTS, MATS, MODULE_ID, TABLES, TIMES, bool, num, pick, str
+} from "./constants.mjs";
+import { WEATHER } from "./climate.mjs";
 
 export function registerSettings() {
   const hidden = (key, def) => game.settings.register(MODULE_ID, key, { scope: "world", config: false, type: Object, default: def });
@@ -13,10 +16,12 @@ export function registerSettings() {
   hidden("fundos", { campo: {}, mesa: {} });
   hidden("cacheFundos", {});
   game.settings.register(MODULE_ID, "favFundos", { scope: "world", config: false, type: Array, default: [] });
+  /* tags of the library images: { at: time of the last change, map: { "fundos/bfu-001.jpg": ["floresta", ...] } } */
+  hidden("tagsFundos", { at: 0, map: {} });
 
   game.settings.register(MODULE_ID, "hudJogadores", {
     name: "Jogadores veem a batalha animada",
-    hint: "A barra de turnos, as faixas de turno, a abertura com cartas e os números de dano aparecem para os jogadores. Desligado, só o mestre vê esses elementos (a cena e os tokens continuam visíveis).",
+    hint: "A barra de turnos, as faixas de turno, a abertura com cartas e os números de dano aparecem para os jogadores. Desligado, só o mestre vê esses elementos (a cena, os tokens e o clima continuam visíveis).",
     scope: "world", config: true, type: Boolean, default: true
   });
   game.settings.register(MODULE_ID, "animacoes", {
@@ -64,8 +69,8 @@ export function registerSettings() {
     scope: "client", config: true, type: Boolean, default: true
   });
   game.settings.register(MODULE_ID, "ambiente", {
-    name: "Partículas do bioma (nesta tela)",
-    hint: "Folhas, neve, brasas, vaga-lumes... Desligue se o computador ficar lento.",
+    name: "Clima e partículas (nesta tela)",
+    hint: "Chuva, neve, folhas, brasas, mana no ar, pássaros... Desligado, ficam só os tons de cor da cena. Desligue se o computador ficar lento.",
     scope: "client", config: true, type: Boolean, default: true
   });
 }
@@ -97,8 +102,22 @@ export const DEFAULT_SETUP = {
   startCombat: true,
   bgMode: "gerado",
   bgLib: "",
-  bgFocus: 0.6
+  bgFocus: 0.6,
+  mat: "bioma",
+  arrangement: "linha",
+  cardMode: "gerada",
+  cardStyle: "classica",
+  cardDesign: "moldura",
+  counters: "cantos",
+  cardInfo: { name: true, hp: true, mp: true, ip: true, status: true },
+  weather: ""
 };
+
+/** Which counters and labels go on the table cards. */
+export function normalizeCardInfo(raw) {
+  const o = raw && typeof raw === "object" ? raw : {};
+  return { name: bool(o.name, true), hp: bool(o.hp, true), mp: bool(o.mp, true), ip: bool(o.ip, true), status: bool(o.status, true) };
+}
 
 export function normalizeSetup(raw = {}) {
   const o = raw && typeof raw === "object" ? raw : {};
@@ -117,7 +136,15 @@ export function normalizeSetup(raw = {}) {
     startCombat: bool(o.startCombat, true),
     bgMode: o.bgMode === "biblioteca" ? "biblioteca" : "gerado",
     bgLib: str(o.bgLib, "", 2000),
-    bgFocus: num(o.bgFocus, 0.6, 0, 1)
+    bgFocus: num(o.bgFocus, 0.6, 0, 1),
+    mat: pick(o.mat, MATS, DEFAULT_SETUP.mat),
+    arrangement: pick(o.arrangement, ARRANGEMENTS, DEFAULT_SETUP.arrangement),
+    cardMode: pick(o.cardMode, CARD_MODES, DEFAULT_SETUP.cardMode),
+    cardStyle: pick(o.cardStyle, CARD_STYLES, DEFAULT_SETUP.cardStyle),
+    cardDesign: pick(o.cardDesign, CARD_DESIGNS, DEFAULT_SETUP.cardDesign),
+    counters: pick(o.counters, COUNTER_POS, o.cardMode === "token" ? "faixa" : "cantos"),
+    cardInfo: normalizeCardInfo(o.cardInfo),
+    weather: o.weather === "nenhum" || Object.prototype.hasOwnProperty.call(WEATHER, o.weather) ? o.weather : ""
   };
 }
 
@@ -148,6 +175,7 @@ export function getBattle() {
     combatId: str(b.combatId, "", 40),
     setup: normalizeSetup(b.setup),
     sources: b.sources && typeof b.sources === "object" ? b.sources : {},
+    slots: b.slots && typeof b.slots === "object" ? b.slots : null,
     startedAt: num(b.startedAt, 0, 0, 1e15)
   };
 }

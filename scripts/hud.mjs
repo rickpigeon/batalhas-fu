@@ -10,12 +10,26 @@
  *
  * The GM uses the bar to start the combat, start/end turns and go to the next round (system API).
  */
-import { BIOMES, ELEMENTS, FRIENDLY, HOSTILE, MODULE_ID, MODULE_TITLE, escapeHTML } from "./constants.mjs";
+import { BIOMES, FRIENDLY, HOSTILE, MODULE_ID, MODULE_TITLE, escapeHTML } from "./constants.mjs";
 import { battleFlags, setting } from "./store.mjs";
 import { combatInfo, combatOfScene, endTurnOf, portraitOf, startTurnOf, statsOf, statusIcons } from "./fu-data.mjs";
 import { canSeeHud, flagOf, layer, overlay, tokenRect, zoom } from "./overlay.mjs";
 import { guard, reportError } from "./errors.mjs";
 import { backends } from "./fx.mjs";
+import { climateOf } from "./climate.mjs";
+import { Weather } from "./weather.mjs";
+
+/** Card display options of a battle (older battles: badges in the corners, everything on). */
+function cardOptions(flags) {
+  const i = flags?.cardInfo ?? {};
+  const on = v => v !== false;
+  return {
+    mode: flags?.cardMode === "token" ? "token" : "gerada",
+    pos: flags?.counters === "faixa" ? "faixa" : "cantos",
+    info: { name: on(i.name), hp: on(i.hp), mp: on(i.mp), ip: on(i.ip), status: on(i.status) }
+  };
+}
+const reducedMotion = () => Boolean(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
 
 const PANEL_KEY = `${MODULE_ID}.painel`;
 const pct = (v, m) => (m > 0 ? Math.max(0, Math.min(100, (v / m) * 100)) : 0);
@@ -39,7 +53,9 @@ export const HUD = {
     try {
       const scene = canvas?.ready ? canvas.scene : null;
       const flags = battleFlags(scene);
-      if ( !flags || !canSeeHud() ) return this.teardown();
+      if ( !flags ) return this.teardown();
+      if ( !canSeeHud() ) return this.weatherOnly(scene, flags);
+      this.ambientOnly = false;
       const root = overlay();
       root.hidden = false;
       root.dataset.layout = flags.layout ?? "campo";
@@ -60,7 +76,19 @@ export const HUD = {
     }
   },
 
+  /** The animated HUD is hidden from this player, but the weather is part of the scene: keep it. */
+  weatherOnly(scene, flags) {
+    if ( !this.ambientOnly || this.scene?.id !== scene.id ) this.teardown();
+    this.ambientOnly = true;
+    this.scene = scene;
+    this.flags = flags;
+    overlay().hidden = false;
+    this.ensureAmbient();
+  },
+
   teardown() {
+    this.ambientOnly = false;
+    Weather.stop();
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     const root = document.getElementById("bfu-overlay");
@@ -189,6 +217,7 @@ export const HUD = {
     const gm = game.user.isGM;
     const showFoeHP = gm || setting("pvInimigos", false);
     const seen = new Set();
+    const tight = layout === "mesa" ? this.tightCards() : new Set();
     for ( const t of this.battleTokens() ) {
       const doc = t.document;
       if ( doc.hidden && !gm ) continue;
@@ -202,11 +231,7 @@ export const HUD = {
       const icons = statusIcons(actor).slice(0, 6).map(s => `<img src="${escapeHTML(s.img)}" title="${escapeHTML(s.name)}" alt="">`).join("");
       const pips = comb && this.info?.started ? `<span class="bfu-pips">${"<i></i>".repeat(Math.max(0, comb.left))}${"<i class=\"off\"></i>".repeat(Math.max(0, comb.total - comb.left))}</span>` : "";
       let html;
-      if ( layout === "mesa" ) {
-        html = `<span class="bfu-badge hp${st.crisis ? " crisis" : ""}" title="PV">${st.hp ? (showHP ? st.hp.value : st.crisis ? "!" : "?") : ""}</span>`
-          + (party && st.mp ? `<span class="bfu-badge mp" title="PM">${st.mp.value}</span>` : "")
-          + `<div class="bfu-icons">${icons}</div>${pips}`;
-      }
+      if ( layout === "mesa" ) html = this.cardPlate({ doc, actor, st, party, showHP, icons, pips });
       else {
         const hpBar = st.hp && showHP ? `<div class="bfu-meter thin hp" title="PV ${st.hp.value}/${st.hp.max}"><i style="width:${pct(st.hp.value, st.hp.max)}%"></i></div>` : "";
         const mpBar = party && st.mp ? `<div class="bfu-meter thin mp" title="PM ${st.mp.value}/${st.mp.max}"><i style="width:${pct(st.mp.value, st.mp.max)}%"></i></div>` : "";
@@ -219,7 +244,8 @@ export const HUD = {
         box.append(plate);
         this.plates.set(t.id, plate);
       }
-      plate.className = `bfu-plate ${layout === "mesa" ? "card" : "field"} ${party ? "party" : "foes"}${st.crisis ? " crisis" : ""}${st.ko ? " ko" : ""}${comb && comb.id === this.info?.actingId ? " acting" : ""}${doc.hidden ? " hidden" : ""}`;
+      const co = layout === "mesa" ? cardOptions(this.flags) : null;
+      plate.className = `bfu-plate ${layout === "mesa" ? `card ${co.pos} ${co.mode}${tight.has(t.id) ? " tight" : ""}` : "field"} ${party ? "party" : "foes"}${st.crisis ? " crisis" : ""}${st.ko ? " ko" : ""}${comb && comb.id === this.info?.actingId ? " acting" : ""}${doc.hidden ? " hidden" : ""}`;
       if ( plate.dataset.html !== html ) {
         plate.innerHTML = html;
         plate.dataset.html = html;
@@ -231,6 +257,61 @@ export const HUD = {
       this.plates.delete(id);
     }
     this.positionPlates(true);
+  },
+
+  /**
+   * Cards with another card right under them (columns, two rows): their strip and name go inside the
+   * card instead of below it, so they do not cover the neighbour.
+   */
+  tightCards() {
+    const gs = canvas?.grid?.size ?? 100;
+    const boxes = this.battleTokens().map(t => {
+      const d = t.document;
+      return { id: t.id, x: Number(d.x), y: Number(d.y), w: Number(d.width) * gs, h: Number(d.height) * gs };
+    });
+    const out = new Set();
+    for ( const a of boxes ) {
+      for ( const b of boxes ) {
+        if ( a === b ) continue;
+        const overlap = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const gap = b.y - (a.y + a.h);
+        if ( overlap > a.w * 0.4 && gap > -a.h * 0.3 && gap < a.w * 0.45 ) {
+          out.add(a.id);
+          break;
+        }
+      }
+    }
+    return out;
+  },
+
+  /**
+   * Counters on a table card: HP, MP and IP (Inventory Points, characters only), the name, statuses and
+   * the turns left. "cantos": round badges on the corners (HP bottom-left, MP bottom-right, IP top-right);
+   * "faixa": a strip under the card with the name and HP/MP/IP chips. A generated card already shows the
+   * name, so in the corners the name is drawn only when the token is shown whole.
+   */
+  cardPlate({ doc, actor, st, party, showHP, icons, pips }) {
+    const { mode, pos, info } = cardOptions(this.flags);
+    const name = escapeHTML(doc.name ?? actor?.name ?? "");
+    const hpText = st.hp ? (showHP ? st.hp.value : st.crisis ? "!" : "?") : "";
+    const hpFull = st.hp ? (showHP ? `${st.hp.value}<small>/${st.hp.max}</small>` : st.crisis ? "crise" : "?") : "";
+    const hp = info.hp && st.hp;
+    const mp = info.mp && party && st.mp;
+    const ip = info.ip && st.ip;
+    const statusRow = info.status && icons ? `<div class="bfu-icons">${icons}</div>` : "";
+    if ( pos === "faixa" ) {
+      const chips = (hp ? `<span class="bfu-chip hp${st.crisis ? " crisis" : ""}" title="Pontos de Vida"><i class="fa-solid fa-heart"></i>${hpFull}</span>` : "")
+        + (mp ? `<span class="bfu-chip mp" title="Pontos de Mente"><i class="fa-solid fa-brain"></i>${st.mp.value}<small>/${st.mp.max}</small></span>` : "")
+        + (ip ? `<span class="bfu-chip ip" title="Pontos de Inventário"><i class="fa-solid fa-flask"></i>${st.ip.value}<small>/${st.ip.max}</small></span>` : "");
+      return `${statusRow}<div class="bfu-strip">${info.name ? `<div class="bfu-cname">${name}${st.crisis ? ` <i class="fa-solid fa-heart-crack"></i>` : ""}</div>` : ""}`
+        + `${chips ? `<div class="bfu-chips">${chips}</div>` : ""}${pips}</div>`;
+    }
+    const showName = info.name && mode === "token";
+    return (hp ? `<span class="bfu-badge hp${st.crisis ? " crisis" : ""}" title="PV">${hpText}</span>` : "")
+      + (mp ? `<span class="bfu-badge mp" title="PM">${st.mp.value}</span>` : "")
+      + (ip ? `<span class="bfu-badge ip" title="Pontos de Inventário (PI)">${st.ip.value}</span>` : "")
+      + (showName ? `<div class="bfu-cname ribbon">${name}</div>` : "")
+      + statusRow + (pips ? `<div class="bfu-cpips${showName ? " low" : ""}">${pips}</div>` : "");
   },
 
   positionPlates() {
@@ -251,6 +332,8 @@ export const HUD = {
         plate.style.width = `${r.w}px`;
         plate.style.height = `${r.h}px`;
         plate.style.fontSize = `${Math.max(10, r.w * 0.11)}px`;
+        const rot = Number(canvas.tokens?.get(id)?.document?.rotation) || 0;
+        plate.style.transform = rot ? `rotate(${rot}deg)` : "";
       }
       else {
         /* beside the token, on the outer side (party to the right, foes to the left) */
@@ -349,7 +432,7 @@ export const HUD = {
     const layout = this.flags?.layout ?? "campo";
     let side = "";
     if ( info?.started && info.faction ) {
-      if ( layout === "mesa" ) side = info.faction === FRIENDLY ? "bottom" : "top";
+      if ( layout === "mesa" && this.flags?.arrangement !== "colunas" ) side = info.faction === FRIENDLY ? "bottom" : "top";
       else side = info.faction === FRIENDLY ? "right" : "left";
     }
     el.dataset.side = side;
@@ -360,48 +443,15 @@ export const HUD = {
   /* Ambient particles                                                                            */
   /* ------------------------------------------------------------------------------------------ */
 
+  /** Weather and mana of the scene (flag "clima"), redrawn only when something changed. */
   ensureAmbient() {
-    const box = layer("ambient");
-    const on = setting("ambiente", true);
-    const biome = this.flags?.biome ?? "planicie";
-    const mana = this.flags?.mana ?? "";
-    const key = on ? `${biome}|${mana}` : "off";
+    if ( !this.scene ) return;
+    const climate = climateOf(this.scene, this.flags);
+    const motion = Boolean(setting("ambiente", true)) && !reducedMotion();
+    const key = `${JSON.stringify(climate)}|${motion}`;
     if ( key === this.ambientKey ) return;
     this.ambientKey = key;
-    box.replaceChildren();
-    if ( !on ) return;
-    const kind = BIOMES[biome]?.ambient ?? "poeira";
-    box.dataset.kind = kind;
-    const count = { folhas: 22, neve: 70, brasas: 40, areia: 34, vagalumes: 26, poeira: 30, brisa: 18, polen: 36 }[kind] ?? 28;
-    const frag = document.createDocumentFragment();
-    for ( let i = 0; i < count; i++ ) {
-      const p = document.createElement("i");
-      p.className = `bfu-p ${kind}`;
-      p.style.setProperty("--x", `${Math.random() * 100}vw`);
-      p.style.setProperty("--y", `${Math.random() * 100}vh`);
-      p.style.setProperty("--s", `${0.6 + Math.random() * 0.9}`);
-      p.style.setProperty("--d", `${8 + Math.random() * 12}s`);
-      p.style.setProperty("--delay", `${-Math.random() * 20}s`);
-      p.style.setProperty("--drift", `${(Math.random() - 0.5) * 22}vw`);
-      p.style.setProperty("--r", `${Math.random() * 360}deg`);
-      p.style.setProperty("--h", `${Math.floor(Math.random() * 4)}`);
-      frag.append(p);
-    }
-    if ( ELEMENTS[mana] ) {
-      for ( let i = 0; i < 18; i++ ) {
-        const p = document.createElement("i");
-        p.className = "bfu-p mana";
-        p.style.setProperty("--c", ELEMENTS[mana].color);
-        p.style.setProperty("--x", `${Math.random() * 100}vw`);
-        p.style.setProperty("--y", `${40 + Math.random() * 60}vh`);
-        p.style.setProperty("--s", `${0.6 + Math.random()}`);
-        p.style.setProperty("--d", `${7 + Math.random() * 8}s`);
-        p.style.setProperty("--delay", `${-Math.random() * 15}s`);
-        p.style.setProperty("--drift", `${(Math.random() - 0.5) * 10}vw`);
-        frag.append(p);
-      }
-    }
-    box.append(frag);
+    Weather.apply(layer("ambient"), climate, { motion });
   },
 
   /* ------------------------------------------------------------------------------------------ */
@@ -490,7 +540,7 @@ export const HUD = {
    * draws and announces only the final state.
    */
   onCombat(combat) {
-    if ( !this.scene || (combat && combat.scene && combat.scene.id !== this.scene.id) ) return;
+    if ( !this.scene || this.ambientOnly || (combat && combat.scene && combat.scene.id !== this.scene.id) ) return;
     clearTimeout(this.combatTimer);
     this.combatTimer = setTimeout(() => {
       try {
@@ -508,7 +558,7 @@ export const HUD = {
 
   /** An actor or token changed (HP, MP, statuses...). */
   onStats() {
-    if ( !this.scene ) return;
+    if ( !this.scene || this.ambientOnly ) return;
     clearTimeout(this.statsTimer);
     this.statsTimer = setTimeout(() => {
       this.info = combatInfo(combatOfScene(this.scene));

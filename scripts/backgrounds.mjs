@@ -484,6 +484,7 @@ export function fieldSVG({ biome = "planicie", time = "dia", mana = "", seed = 1
 /* Table (top view)                                                                                 */
 /* ---------------------------------------------------------------------------------------------- */
 
+/** Mat colours and emblem of each biome. */
 const MATS = {
   planicie: { mat: "#3f6b3a", edge: "#c9a24a", emblem: "wheat" },
   floresta: { mat: "#24502f", edge: "#b9a36a", emblem: "leaf" },
@@ -496,11 +497,160 @@ const MATS = {
   ruinas: { mat: "#4a3f5c", edge: "#d6c08a", emblem: "column" }
 };
 
+/** Mat styles chosen in the panel (colours; the emblem stays the biome's). */
+const MAT_STYLES = {
+  verde: { mat: "#1f5a32", edge: "#d9c27a" },
+  vinho: { mat: "#5a1424", edge: "#e0b85a" },
+  azul: { mat: "#1c3270", edge: "#d9c27a", velvet: true },
+  roxo: { mat: "#3c1f5e", edge: "#e0c88a", velvet: true },
+  preto: { mat: "#18161e", edge: "#b9a36a" },
+  couro: { mat: "#7a4a26", edge: "#e8c890", stitch: "#3a1f0e" },
+  mapa: { mat: "#d8c08c", edge: "#6b4a24", map: true }
+};
+
 const WOODS = {
   escura: { a: "#4a2c17", b: "#2a170a" },
   clara: { a: "#ad7a45", b: "#7a4f28" },
-  pedra: { a: "#77726c", b: "#3f3c39" }
+  ebano: { a: "#3d1712", b: "#170705" }
 };
+
+/** Hand-drawn map details (coasts, roads, a compass) inside a box. */
+function mapDrawing(x, y, w, h, r, ink, seed) {
+  let g = "";
+  for ( let i = 0; i < 4; i++ ) {
+    const cx = x + w * (0.15 + r() * 0.7), cy = y + h * (0.15 + r() * 0.7);
+    g += `<path d="${blob(cx, cy, w * (0.08 + r() * 0.12), h * (0.08 + r() * 0.12), r, 0.6, 12)}" fill="${ink}" fill-opacity=".07" stroke="${ink}" stroke-width="2.5" stroke-opacity=".45"/>`;
+  }
+  for ( let i = 0; i < 3; i++ ) {
+    let d = `M${pt(x + r() * w, y + r() * h)}`;
+    for ( let k = 0; k < 4; k++ ) d += ` Q${pt(x + r() * w, y + r() * h)} ${pt(x + r() * w, y + r() * h)}`;
+    g += `<path d="${d}" fill="none" stroke="${ink}" stroke-width="2.5" stroke-dasharray="10 8" opacity=".4"/>`;
+  }
+  for ( let i = 0; i < 8; i++ ) {
+    const mx = x + r() * w, my = y + r() * h;
+    g += `<path d="M${pt(mx - 14, my + 8)} L${pt(mx, my - 12)} L${pt(mx + 14, my + 8)}" fill="none" stroke="${ink}" stroke-width="2" opacity=".45"/>`;
+  }
+  for ( let gx = x + w / 8; gx < x + w; gx += w / 8 ) g += `<path d="M${f(gx)},${f(y)} V${f(y + h)}" stroke="${ink}" stroke-width="1" opacity=".1"/>`;
+  for ( let gy = y + h / 6; gy < y + h; gy += h / 6 ) g += `<path d="M${f(x)},${f(gy)} H${f(x + w)}" stroke="${ink}" stroke-width="1" opacity=".1"/>`;
+  return g + compass(x + w - 110 - (seed % 2) * (w - 220), y + h - 110, 60, ink);
+}
+
+function compass(cx, cy, s, ink) {
+  let g = `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(s)}" fill="none" stroke="${ink}" stroke-width="2" opacity=".55"/>`;
+  for ( let i = 0; i < 8; i++ ) {
+    const a = (i / 8) * Math.PI * 2, long = i % 2 === 0, l = long ? s * 0.95 : s * 0.55;
+    const ax = cx + Math.cos(a) * l, ay = cy + Math.sin(a) * l;
+    const bx = cx + Math.cos(a + 0.25) * s * 0.18, by = cy + Math.sin(a + 0.25) * s * 0.18;
+    const ccx = cx + Math.cos(a - 0.25) * s * 0.18, ccy = cy + Math.sin(a - 0.25) * s * 0.18;
+    g += `<path d="M${pt(ax, ay)} L${pt(bx, by)} L${pt(ccx, ccy)} Z" fill="${ink}" opacity="${long ? 0.6 : 0.35}"/>`;
+  }
+  return g;
+}
+
+function rune(cx, cy, s, c, r) {
+  let g = `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(s)}" fill="none" stroke="${c}" stroke-width="3"/><circle cx="${f(cx)}" cy="${f(cy)}" r="${f(s * 0.8)}" fill="none" stroke="${c}" stroke-width="1.5"/>`;
+  for ( let i = 0; i < 6; i++ ) {
+    const a = (i / 6) * Math.PI * 2 + r();
+    const x = cx + Math.cos(a) * s * 0.9, y = cy + Math.sin(a) * s * 0.9;
+    g += `<path d="M${pt(x - 6, y - 6)} L${pt(x + 6, y)} L${pt(x - 4, y + 7)}" fill="none" stroke="${c}" stroke-width="2"/>`;
+  }
+  g += `<path d="M${pt(cx, cy - s * 0.55)} L${pt(cx + s * 0.48, cy + s * 0.28)} L${pt(cx - s * 0.48, cy + s * 0.28)} Z" fill="none" stroke="${c}" stroke-width="2"/>`;
+  return g;
+}
+
+/** The table top around the mat. */
+function tableTop(table, seed, r) {
+  let defs = "", body = "";
+  switch ( table ) {
+    case "pedra":
+      defs += `<filter id="bfStone" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="5" seed="${seed}" result="t"/>`
+        + `<feDiffuseLighting in="t" surfaceScale="3" lighting-color="#ffffff" result="l"><feDistantLight azimuth="235" elevation="48"/></feDiffuseLighting>`
+        + `<feComposite in="l" in2="SourceGraphic" operator="arithmetic" k1="1.3" k2="0" k3="0" k4="-0.05"/></filter>`;
+      body += `<rect width="${W}" height="${H}" fill="#77726c" filter="url(#bfStone)"/>`;
+      break;
+    case "marmore": {
+      defs += noiseFilter("bfMarble", "#8a857c", "0.004 0.012", 4, seed, 1.6, -0.75);
+      defs += `<filter id="bfVein" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="1.6"/></filter>`;
+      body += `<rect width="${W}" height="${H}" fill="#ece8df"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfMarble)" opacity=".55"/>`;
+      for ( let i = 0; i < 9; i++ ) {
+        let d = `M${pt(-50, r() * H)}`;
+        let x = -50;
+        while ( x < W + 50 ) {
+          x += 120 + r() * 260;
+          d += ` Q${pt(x - 80, r() * H)} ${pt(x, r() * H)}`;
+        }
+        body += `<path d="${d}" fill="none" stroke="#7d776e" stroke-width="${f(1.5 + r() * 3)}" opacity="${f(0.25 + r() * 0.3)}" filter="url(#bfVein)"/>`;
+      }
+      break;
+    }
+    case "couro":
+      defs += noiseFilter("bfLeather", "#2a1408", "0.35", 3, seed, 2.2, -1.0);
+      body += `<rect width="${W}" height="${H}" fill="#6b3a1e"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfLeather)" opacity=".5"/>`;
+      body += `<rect x="26" y="26" width="${W - 52}" height="${H - 52}" rx="30" fill="none" stroke="#e2bf86" stroke-width="3" stroke-dasharray="16 10" opacity=".55"/>`;
+      break;
+    case "metal": {
+      defs += `<linearGradient id="bfSteel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f757e"/><stop offset=".5" stop-color="#4b5058"/><stop offset="1" stop-color="#2f3238"/></linearGradient>`;
+      defs += noiseFilter("bfBrush", "#c9ced6", "0.002 0.6", 2, seed, 1.4, -0.85);
+      body += `<rect width="${W}" height="${H}" fill="url(#bfSteel)"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfBrush)" opacity=".45"/>`;
+      for ( const x of [W / 3, (W * 2) / 3] ) body += `<path d="M${f(x)},0 V${H}" stroke="#1f2126" stroke-width="5"/><path d="M${f(x + 3)},0 V${H}" stroke="#9aa0aa" stroke-width="1.5" opacity=".5"/>`;
+      for ( let x = 40; x < W; x += 160 ) for ( const y of [30, H - 30] ) body += `<circle cx="${x}" cy="${y}" r="9" fill="#8a909a" stroke="#202226" stroke-width="3"/><circle cx="${x - 3}" cy="${y - 3}" r="3" fill="#d9dde3"/>`;
+      for ( let y = 120; y < H - 60; y += 160 ) for ( const x of [30, W - 30] ) body += `<circle cx="${x}" cy="${y}" r="9" fill="#8a909a" stroke="#202226" stroke-width="3"/><circle cx="${x - 3}" cy="${y - 3}" r="3" fill="#d9dde3"/>`;
+      break;
+    }
+    case "arcano": {
+      defs += noiseFilter("bfDeep", "#000000", "0.01", 4, seed, 1.5, -0.6);
+      defs += `<filter id="bfRuneGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+      body += `<rect width="${W}" height="${H}" fill="#191a3e"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfDeep)" opacity=".6"/>`;
+      let runes = "";
+      for ( const [x, y, s] of [[150, 170, 110], [W - 150, 170, 110], [150, H - 170, 110], [W - 150, H - 170, 110], [150, H / 2, 70], [W - 150, H / 2, 70]] ) runes += rune(x, y, s, "#8fa4ff", r);
+      body += `<g opacity=".75" filter="url(#bfRuneGlow)">${runes}</g>`;
+      for ( let i = 0; i < 60; i++ ) body += `<circle cx="${f(r() * W)}" cy="${f(r() * H)}" r="${f(1 + r() * 2)}" fill="#c9d2ff" opacity="${f(0.2 + r() * 0.5)}"/>`;
+      break;
+    }
+    case "pergaminho":
+      defs += noiseFilter("bfParch", "#5a3a14", "0.02", 4, seed, 1.8, -0.9);
+      defs += `<radialGradient id="bfBurn" cx="50%" cy="50%" r="72%"><stop offset=".6" stop-color="#3a2410" stop-opacity="0"/><stop offset="1" stop-color="#3a2410" stop-opacity=".75"/></radialGradient>`;
+      body += `<rect width="${W}" height="${H}" fill="#d9c08a"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfParch)" opacity=".45"/>`;
+      body += mapDrawing(0, 0, W, H, r, "#4a2e12", seed);
+      body += `<rect width="${W}" height="${H}" fill="url(#bfBurn)"/>`;
+      break;
+    default: {
+      const WD = WOODS[table] ?? WOODS.escura;
+      defs += noiseFilter("bfGrain", WD.b, "0.002 0.09", 3, seed, 3, -1.25);
+      body += `<rect width="${W}" height="${H}" fill="${WD.a}"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfGrain)" opacity=".85"/>`;
+      for ( let y = 150; y < H; y += 150 + r() * 40 ) body += `<path d="M0,${f(y)} H${W}" stroke="${shade(WD.b, -0.3)}" stroke-width="4" opacity=".7"/><path d="M0,${f(y + 3)} H${W}" stroke="${shade(WD.a, 0.25)}" stroke-width="1.5" opacity=".35"/>`;
+    }
+  }
+  return { defs, body };
+}
+
+/** The play mat with its border, emblem and battle line ("colunas": the line is vertical). */
+function playMat(matKey, biome, arrangement, seed, r) {
+  const B = MATS[biome] ?? MATS.planicie;
+  const S = matKey && matKey !== "bioma" ? MAT_STYLES[matKey] : null;
+  const M = { mat: S?.mat ?? B.mat, edge: S?.edge ?? B.edge, emblem: B.emblem };
+  const mx = W * 0.13, my = H * 0.05, mw = W * 0.74, mh = H * 0.9;
+  let defs = "", body = "";
+  const vertical = arrangement === "colunas";
+  if ( matKey !== "nenhum" ) {
+    defs += `<radialGradient id="bfMat" cx="50%" cy="50%" r="70%"><stop offset="0" stop-color="${shade(M.mat, S?.velvet ? 0.22 : 0.12)}"/><stop offset="1" stop-color="${shade(M.mat, S?.velvet ? -0.5 : -0.35)}"/></radialGradient>`;
+    defs += noiseFilter("bfFelt", shade(M.mat, -0.5), S?.map ? "0.03" : "0.6", 2, seed + 2, 2, -0.9);
+    body += `<rect x="${f(mx + 10)}" y="${f(my + 16)}" width="${f(mw)}" height="${f(mh)}" rx="38" fill="#000" opacity=".45"/>`;
+    body += `<rect x="${f(mx)}" y="${f(my)}" width="${f(mw)}" height="${f(mh)}" rx="38" fill="url(#bfMat)"/>`;
+    body += `<rect x="${f(mx)}" y="${f(my)}" width="${f(mw)}" height="${f(mh)}" rx="38" fill="#000" filter="url(#bfFelt)" opacity="${S?.map ? 0.3 : 0.16}"/>`;
+    if ( S?.map ) body += `<g>${mapDrawing(mx + 40, my + 40, mw - 80, mh - 80, r, "#4a2e12", seed)}</g>`;
+    if ( S?.stitch ) body += `<rect x="${f(mx + 12)}" y="${f(my + 12)}" width="${f(mw - 24)}" height="${f(mh - 24)}" rx="30" fill="none" stroke="${S.stitch}" stroke-width="4" stroke-dasharray="12 9" opacity=".8"/>`;
+    body += `<rect x="${f(mx + 18)}" y="${f(my + 18)}" width="${f(mw - 36)}" height="${f(mh - 36)}" rx="26" fill="none" stroke="${M.edge}" stroke-width="3" stroke-dasharray="14 9" opacity=".75"/>`;
+    body += `<rect x="${f(mx + 34)}" y="${f(my + 34)}" width="${f(mw - 68)}" height="${f(mh - 68)}" rx="20" fill="none" stroke="${M.edge}" stroke-width="1.5" opacity=".35"/>`;
+    body += `<g opacity=".14">${emblem(M.emblem, W / 2, H / 2, 150, M.edge)}</g>`;
+  }
+  /* battle line */
+  const o = matKey === "nenhum" ? 0.4 : 0.55;
+  if ( vertical ) body += `<path d="M${f(W / 2)},${f(my + 80)} V${f(H / 2 - 70)} M${f(W / 2)},${f(H / 2 + 70)} V${f(my + mh - 80)}" stroke="${M.edge}" stroke-width="2.5" opacity="${o}"/>`;
+  else body += `<path d="M${f(mx + 80)},${f(H / 2)} H${f(W / 2 - 70)} M${f(W / 2 + 70)},${f(H / 2)} H${f(mx + mw - 80)}" stroke="${M.edge}" stroke-width="2.5" opacity="${o}"/>`;
+  body += `<path d="M${f(W / 2)},${f(H / 2 - 34)} L${f(W / 2 + 34)},${f(H / 2)} L${f(W / 2)},${f(H / 2 + 34)} L${f(W / 2 - 34)},${f(H / 2)} Z" fill="none" stroke="${M.edge}" stroke-width="3" opacity="${o + 0.15}"/>`;
+  return { defs, body, edge: M.edge, area: { mx, my, mw, mh } };
+}
 
 function emblem(kind, cx, cy, s, c) {
   switch ( kind ) {
@@ -583,44 +733,23 @@ function manaBox(x, y, w, h, el, r) {
   return `${g}</g>`;
 }
 
-export function tableSVG({ biome = "planicie", table = "escura", mana = "", seed = 1, slots = { party: [], foes: [] } } = {}) {
-  const M = MATS[biome] ?? MATS.planicie;
-  const WD = WOODS[table] ?? WOODS.escura;
+export function tableSVG({ biome = "planicie", table = "escura", mat = "bioma", arrangement = "linha", mana = "", seed = 1, slots = { party: [], foes: [] } } = {}) {
   const r = rng(seed * 104729 + biome.length * 17);
   let defs = "";
   let body = "";
-
-  /* table */
-  if ( table === "pedra" ) {
-    defs += `<filter id="bfStone" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="5" seed="${seed}" result="t"/>`
-      + `<feDiffuseLighting in="t" surfaceScale="3" lighting-color="#ffffff" result="l"><feDistantLight azimuth="235" elevation="48"/></feDiffuseLighting>`
-      + `<feComposite in="l" in2="SourceGraphic" operator="arithmetic" k1="1.3" k2="0" k3="0" k4="-0.05"/></filter>`;
-    body += `<rect width="${W}" height="${H}" fill="${WD.a}" filter="url(#bfStone)"/>`;
-  }
-  else {
-    defs += noiseFilter("bfGrain", WD.b, "0.002 0.09", 3, seed, 3, -1.25);
-    body += `<rect width="${W}" height="${H}" fill="${WD.a}"/><rect width="${W}" height="${H}" fill="#000" filter="url(#bfGrain)" opacity=".85"/>`;
-    for ( let y = 150; y < H; y += 150 + r() * 40 ) body += `<path d="M0,${f(y)} H${W}" stroke="${shade(WD.b, -0.3)}" stroke-width="4" opacity=".7"/><path d="M0,${f(y + 3)} H${W}" stroke="${shade(WD.a, 0.25)}" stroke-width="1.5" opacity=".35"/>`;
-  }
+  const top = tableTop(table, seed, r);
+  defs += top.defs;
+  body += top.body;
   defs += `<radialGradient id="bfLamp" cx="50%" cy="48%" r="70%"><stop offset="0" stop-color="#ffd9a0" stop-opacity=".22"/><stop offset=".55" stop-color="#ffd9a0" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".55"/></radialGradient>`;
 
-  /* play mat */
-  const mx = W * 0.13, my = H * 0.05, mw = W * 0.74, mh = H * 0.9;
-  defs += `<radialGradient id="bfMat" cx="50%" cy="50%" r="70%"><stop offset="0" stop-color="${shade(M.mat, 0.12)}"/><stop offset="1" stop-color="${shade(M.mat, -0.35)}"/></radialGradient>`;
-  defs += noiseFilter("bfFelt", shade(M.mat, -0.5), "0.6", 2, seed + 2, 2, -0.9);
-  body += `<rect x="${f(mx + 10)}" y="${f(my + 16)}" width="${f(mw)}" height="${f(mh)}" rx="38" fill="#000" opacity=".45"/>`;
-  body += `<rect x="${f(mx)}" y="${f(my)}" width="${f(mw)}" height="${f(mh)}" rx="38" fill="url(#bfMat)"/>`;
-  body += `<rect x="${f(mx)}" y="${f(my)}" width="${f(mw)}" height="${f(mh)}" rx="38" fill="#000" filter="url(#bfFelt)" opacity=".16"/>`;
-  body += `<rect x="${f(mx + 18)}" y="${f(my + 18)}" width="${f(mw - 36)}" height="${f(mh - 36)}" rx="26" fill="none" stroke="${M.edge}" stroke-width="3" stroke-dasharray="14 9" opacity=".75"/>`;
-  body += `<rect x="${f(mx + 34)}" y="${f(my + 34)}" width="${f(mw - 68)}" height="${f(mh - 68)}" rx="20" fill="none" stroke="${M.edge}" stroke-width="1.5" opacity=".35"/>`;
-  body += `<g opacity=".14">${emblem(M.emblem, W / 2, H / 2, 150, M.edge)}</g>`;
-  /* battle line */
-  body += `<path d="M${f(mx + 80)},${f(H / 2)} H${f(W / 2 - 70)} M${f(W / 2 + 70)},${f(H / 2)} H${f(mx + mw - 80)}" stroke="${M.edge}" stroke-width="2.5" opacity=".55"/>`;
-  body += `<path d="M${f(W / 2)},${f(H / 2 - 34)} L${f(W / 2 + 34)},${f(H / 2)} L${f(W / 2)},${f(H / 2 + 34)} L${f(W / 2 - 34)},${f(H / 2)} Z" fill="none" stroke="${M.edge}" stroke-width="3" opacity=".7"/>`;
-  /* card slots */
-  for ( const [side, list] of [["foes", slots.foes ?? []], ["party", slots.party ?? []]] ) {
+  const pm = playMat(mat, biome, arrangement, seed, r);
+  defs += pm.defs;
+  body += pm.body;
+  /* card slots (rotated with the card in the fan) */
+  for ( const [side, list] of [["foes", slots?.foes ?? []], ["party", slots?.party ?? []]] ) {
     for ( const s of list ) {
-      body += `<rect x="${f(s.x - s.w / 2 - 10)}" y="${f(s.y - s.h / 2 - 10)}" width="${f(s.w + 20)}" height="${f(s.h + 20)}" rx="16" fill="${side === "foes" ? "#3a0a10" : "#0a1a3a"}" fill-opacity=".25" stroke="${M.edge}" stroke-width="2.5" stroke-dasharray="10 7" opacity=".85"/>`;
+      const rot = Number(s.rot) || 0;
+      body += `<rect x="${f(-s.w / 2 - 10)}" y="${f(-s.h / 2 - 10)}" width="${f(s.w + 20)}" height="${f(s.h + 20)}" rx="16" transform="translate(${pt(s.x, s.y)})${rot ? ` rotate(${f(rot)})` : ""}" fill="${side === "foes" ? "#3a0a10" : "#0a1a3a"}" fill-opacity=".25" stroke="${pm.edge}" stroke-width="2.5" stroke-dasharray="10 7" opacity=".85"/>`;
     }
   }
 
@@ -637,7 +766,8 @@ export function tableSVG({ biome = "planicie", table = "escura", mana = "", seed
   const deco = BIOME_PROPS[biome];
   if ( deco ) body += deco(r);
 
-  const m = manaLayer(mana, r, { y0: my, y1: my + mh, cy: H / 2, ry: mh * 0.5 }, 0.4);
+  const a = pm.area;
+  const m = manaLayer(mana, r, { y0: a.my, y1: a.my + a.mh, cy: H / 2, ry: a.mh * 0.5 }, 0.4);
   defs += m.defs;
   body += m.body;
   body += `<rect width="${W}" height="${H}" fill="url(#bfLamp)"/>`;
