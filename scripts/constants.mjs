@@ -71,7 +71,8 @@ export const TABLES = {
   couro: "Couro",
   metal: "Metal rebitado",
   arcano: "Mesa arcana (runas)",
-  pergaminho: "Mapa antigo"
+  pergaminho: "Mapa antigo",
+  biblioteca: "Imagem da biblioteca (o pano continua)"
 };
 
 /** Play mat (the cloth where the cards lie). */
@@ -120,6 +121,18 @@ export const CARD_DESIGNS = {
 export const CARD_MODES = {
   gerada: "Carta gerada (moldura, retrato e nome)",
   token: "Token inteiro (só nome e contadores)"
+};
+
+/** Openings of a battle (intro.mjs). "sorteada" picks one of the others each time. */
+export const INTROS = {
+  cartas: "Cartas embaralhadas",
+  versus: "Versus (grupo × inimigos)",
+  laminas: "Choque de lâminas",
+  portal: "Portal de mana",
+  cortinas: "Cortinas de teatro",
+  relampago: "Relâmpago",
+  estilhacos: "Vidro estilhaçado",
+  sorteada: "Sorteada a cada batalha"
 };
 
 /** Where the counters (HP, MP, IP) and the name go on a card. */

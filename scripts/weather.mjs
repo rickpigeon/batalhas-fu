@@ -392,11 +392,115 @@ const KINDS = {
       }
     }
   },
+  feno: tumbleweeds(),
   passaros: fliers({ every: [3, 7], flock: [3, 7], size: [6, 10], speed: [110, 190], color: "rgba(25,25,35,.8)", flap: [6, 9], band: [0.05, 0.4] }),
   morcegos: fliers({ every: [1.5, 4], flock: [4, 9], size: [5, 8], speed: [160, 260], color: "rgba(10,6,16,.9)", flap: [12, 16], band: [0.05, 0.7], erratic: true }),
   cadentes: streakers({ every: [0.8, 3], speed: [900, 1300], tail: [120, 220], head: "#ffffff", tailColor: "#bfe0ff", size: 8 }),
   meteoros: streakers({ every: [1.5, 4], speed: [450, 750], tail: [260, 420], head: "#ffd27a", tailColor: "#ff7a2a", size: 26 })
 };
+
+/* Tumbleweed sprites: a ball of dry twigs, drawn once (a few variants). */
+const weeds = [];
+function weedSprite(i) {
+  if ( weeds[i] ) return weeds[i];
+  const size = 128, cx = size / 2, R = size / 2 - 6;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const x = c.getContext("2d");
+  const tones = ["#6b4a22", "#8f6a36", "#4a3218", "#b8904e", "#d9b878"];
+  x.lineCap = "round";
+  /* a faint body so the ball reads as a ball */
+  const body = x.createRadialGradient(cx, cx, R * 0.2, cx, cx, R);
+  body.addColorStop(0, "rgba(120, 88, 44, .35)");
+  body.addColorStop(1, "rgba(120, 88, 44, .05)");
+  x.fillStyle = body;
+  x.beginPath();
+  x.arc(cx, cx, R * 0.92, 0, TAU);
+  x.fill();
+  for ( let k = 0; k < 150; k++ ) {
+    const a0 = Math.random() * TAU, rr = R * (0.3 + Math.random() * 0.7);
+    const ox = Math.cos(a0 + 1.7) * R * 0.25 * Math.random(), oy = Math.sin(a0 + 1.7) * R * 0.25 * Math.random();
+    x.strokeStyle = tones[k % tones.length];
+    x.globalAlpha = 0.7 + Math.random() * 0.3;
+    x.lineWidth = 1.4 + Math.random() * 2.2;
+    x.beginPath();
+    x.arc(cx + ox, cx + oy, rr, a0, a0 + 0.6 + Math.random() * 2.4);
+    x.stroke();
+  }
+  /* twigs poking out */
+  for ( let k = 0; k < 14; k++ ) {
+    const a = Math.random() * TAU, r0 = R * 0.75, r1 = R * (0.95 + Math.random() * 0.1);
+    x.strokeStyle = tones[k % 3];
+    x.globalAlpha = 0.8;
+    x.lineWidth = 1.2;
+    x.beginPath();
+    x.moveTo(cx + Math.cos(a) * r0, cx + Math.sin(a) * r0);
+    x.lineTo(cx + Math.cos(a + 0.15) * r1, cx + Math.sin(a + 0.15) * r1);
+    x.stroke();
+  }
+  weeds[i] = c;
+  return c;
+}
+
+/** Tumbleweeds rolling and hopping across the ground, raising a little dust when they land. */
+function tumbleweeds() {
+  return {
+    n: 0,
+    spawner: true,
+    every: [2.2, 5.5],
+    spawn(s, list) {
+      const dir = s.wind < -0.1 ? -1 : s.wind > 0.1 ? 1 : Math.random() < 0.5 ? -1 : 1;
+      const r = rand(26, 52);
+      list.push({
+        x: dir > 0 ? -r * 2 : s.w + r * 2, ground: rand(s.h * 0.6, s.h * 0.93), r,
+        v: rand(150, 260) * (0.7 + Math.abs(s.wind) * 0.9) * dir, rot: rand(0, TAU), y: 0, vy: -rand(60, 200),
+        sprite: Math.floor(Math.random() * 4), puffs: []
+      });
+    },
+    step(p, dt, s) {
+      p.x += p.v * dt;
+      p.rot += (p.v / p.r) * dt;
+      p.vy += 950 * dt;
+      p.y += p.vy * dt;
+      if ( p.y > 0 ) {
+        p.y = 0;
+        const bounce = Math.abs(p.vy) * 0.5;
+        p.vy = -(bounce > 80 ? bounce : rand(90, 260));
+        p.puffs.push({ x: p.x, life: 0 });
+      }
+      for ( let i = p.puffs.length - 1; i >= 0; i-- ) {
+        p.puffs[i].life += dt;
+        if ( p.puffs[i].life > 0.7 ) p.puffs.splice(i, 1);
+      }
+      return p.v > 0 ? p.x < s.w + p.r * 3 : p.x > -p.r * 3;
+    },
+    draw(ctx, list) {
+      for ( const p of list ) {
+        /* shadow on the ground, smaller while in the air */
+        const air = Math.min(1, -p.y / 120);
+        ctx.globalAlpha = 0.28 * (1 - air * 0.6);
+        ctx.fillStyle = "#1a1208";
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.ground + p.r * 0.15, p.r * (1 - air * 0.35), p.r * 0.22, 0, 0, TAU);
+        ctx.fill();
+        for ( const d of p.puffs ) {
+          const k = d.life / 0.7;
+          ctx.globalAlpha = 0.35 * (1 - k);
+          ctx.fillStyle = "#d9c39a";
+          ctx.beginPath();
+          ctx.ellipse(d.x, p.ground, p.r * (0.6 + k * 1.4), p.r * (0.2 + k * 0.4), 0, 0, TAU);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 0.95;
+        ctx.save();
+        ctx.translate(p.x, p.ground + p.y - p.r * 0.85);
+        ctx.rotate(p.rot);
+        ctx.drawImage(weedSprite(p.sprite), -p.r, -p.r, p.r * 2, p.r * 2);
+        ctx.restore();
+      }
+    }
+  };
+}
 
 function bubbles(colors, n) {
   return {

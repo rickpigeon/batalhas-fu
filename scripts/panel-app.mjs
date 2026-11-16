@@ -7,7 +7,7 @@
  *   Efeitos        try every animation on the selected/targeted tokens, see which modules are active
  */
 import {
-  ARRANGEMENTS, BIOMES, CARD_DESIGNS, CARD_MODES, CARD_STYLES, COUNTER_POS, ELEMENTS, LAYOUTS, MANA_ELEMENTS, MATS, MODULE_ID,
+  ARRANGEMENTS, BIOMES, CARD_DESIGNS, CARD_MODES, CARD_STYLES, COUNTER_POS, ELEMENTS, INTROS, LAYOUTS, MANA_ELEMENTS, MATS, MODULE_ID,
   MODULE_TITLE, TABLES, TIMES, escapeHTML, isGM
 } from "./constants.mjs";
 import {
@@ -209,10 +209,21 @@ export class BattlePanel extends ApplicationV2 {
     pane.querySelector(".bfu-biomes").innerHTML = Object.entries(BIOMES).map(([k, v]) => `<button type="button" class="bfu-biome${d.biome === k ? " active" : ""}" data-biome="${k}"><i class="${v.icon}"></i><span>${v.label}</span>${customBackground(d.layout, k) ? `<em title="Fundo próprio">★</em>` : ""}</button>`).join("");
     const manaOpts = [["", "Nenhuma"], ...MANA_ELEMENTS.map(k => [k, ELEMENTS[k].label])].map(([k, l]) => `<option value="${k}"${d.mana === k ? " selected" : ""}>${l}</option>`).join("");
     const opts = (table, cur) => Object.entries(table).map(([k, l]) => `<option value="${k}"${cur === k ? " selected" : ""}>${escapeHTML(l)}</option>`).join("");
+    const tableItem = this.libItems?.find(x => x.src === d.tableLib);
+    const tableLib = d.layout === "mesa" && d.table === "biblioteca"
+      ? `<div class="bfu-libsel">${d.tableLib ? `<img src="${escapeHTML(tableItem?.thumb ?? d.tableLib)}" alt="">` : `<span class="bfu-libsel-empty"><i class="fa-solid fa-table"></i></span>`}
+          <div><b>${d.tableLib ? escapeHTML(tableItem?.name ?? decodeURIComponent(d.tableLib.split("/").pop())) : "Escolha a imagem da mesa"}</b>
+          <span class="bfu-inline"><button type="button" data-act="openTableLib"><i class="fa-solid fa-images"></i> Da biblioteca…</button>
+          <button type="button" data-act="pickTableFile" title="Qualquer imagem do servidor"><i class="fa-solid fa-folder-open"></i></button></span></div></div>
+        ${d.tableLib ? `<label>Recorte da mesa <span class="bfu-inline"><input type="range" name="tableFocus" min="0" max="1" step="0.01" value="${d.tableFocus}"><output>${Math.round(d.tableFocus * 100)}%</output></span></label>` : ""}
+        <p class="bfu-hint">A imagem fica por baixo; o pano, as marcações das cartas e os objetos são pintados por cima.</p>`
+      : "";
     const variant = d.layout === "mesa"
       ? `<label>Mesa <select name="table">${opts(TABLES, d.table)}</select></label>
+        ${tableLib}
         <label>Pano <select name="mat">${opts(MATS, d.mat)}</select></label>
-        <label>Disposição <select name="arrangement">${opts(ARRANGEMENTS, d.arrangement)}</select></label>`
+        <label>Disposição <select name="arrangement">${opts(ARRANGEMENTS, d.arrangement)}</select></label>
+        <label class="bfu-check"><input type="checkbox" name="props"${d.props ? " checked" : ""}> Objetos sobre a mesa (caixa de mana, baralho, dados, velas)</label>`
       : `<label>Hora <select name="time">${opts(TIMES, d.time)}</select></label>`;
     const weatherOpts = [["", `Do bioma (${WEATHER[biomeLayer(d.biome)]?.label ?? "—"})`], ["nenhum", "Nenhum"], ...Object.entries(WEATHER).map(([k, w]) => [k, w.label])]
       .map(([k, l]) => `<option value="${k}"${d.weather === k ? " selected" : ""}>${escapeHTML(l)}</option>`).join("");
@@ -265,7 +276,8 @@ export class BattlePanel extends ApplicationV2 {
       + `${f.ref.kind === "actor" ? `<input type="number" min="1" max="12" value="${f.qty}" data-qty="${f.key}" title="Quantidade">` : ""}<button type="button" class="bfu-x" data-del="${f.key}" title="Tirar"><i class="fa-solid fa-xmark"></i></button></div>`).join("")
       || `<p class="bfu-drop">Solte NPCs aqui</p>`;
     pane.querySelector(".bfu-checks").innerHTML = `
-      <label class="bfu-check"><input type="checkbox" name="intro"${d.intro ? " checked" : ""}> Abertura com cartas embaralhadas</label>
+      <label class="bfu-introsel">Abertura <select name="introStyle">${[...Object.entries(INTROS), ["nenhuma", "Sem abertura"]].map(([k, l]) => `<option value="${k}"${(d.intro ? d.introStyle : "nenhuma") === k ? " selected" : ""}>${escapeHTML(l)}</option>`).join("")}</select>
+        <button type="button" data-act="previewIntro" title="Ver esta abertura só na sua tela"><i class="fa-solid fa-eye"></i></button></label>
       <label class="bfu-check"><input type="checkbox" name="activate"${d.activate ? " checked" : ""}> Levar todos para a batalha</label>
       <label class="bfu-check"><input type="checkbox" name="startCombat"${d.startCombat ? " checked" : ""}> Começar o combate em seguida (o sistema pergunta quem age primeiro)</label>`;
     const start = pane.querySelector(".bfu-start");
@@ -298,9 +310,17 @@ export class BattlePanel extends ApplicationV2 {
     const d = this.draft;
     const custom = customBackground(d.layout, d.biome);
     const photo = d.bgMode === "biblioteca" ? d.bgLib : custom;
+    const tableImage = !photo && d.layout === "mesa" && d.table === "biblioteca" ? d.tableLib : "";
     clearTimeout(this.previewTimer);
     this.previewTimer = setTimeout(() => {
-      if ( photo ) {
+      if ( tableImage ) {
+        box.style.backgroundImage = `url("${tableImage.replace(/"/g, "%22")}")`;
+        box.style.backgroundSize = "cover";
+        box.style.backgroundPosition = `50% ${Math.round(d.tableFocus * 100)}%`;
+        img.hidden = false;
+        img.src = thumb(d, 520);
+      }
+      else if ( photo ) {
         img.hidden = true;
         box.style.backgroundImage = `url("${photo.replace(/"/g, "%22")}")`;
         box.style.backgroundPosition = `50% ${Math.round(d.bgFocus * 100)}%`;
@@ -378,7 +398,7 @@ export class BattlePanel extends ApplicationV2 {
     };
     const list = items.filter(match);
     this.libVisible = list.map(x => x.src);
-    const current = this.libTarget?.type === "setup" ? this.draft.bgLib : customBackground(this.libTarget?.layout, this.libTarget?.biome);
+    const current = this.libTarget?.type === "setup" ? this.draft.bgLib : this.libTarget?.type === "table" ? this.draft.tableLib : customBackground(this.libTarget?.layout, this.libTarget?.biome);
     grid.classList.toggle("marking", this.libMark);
     grid.innerHTML = list.map(x => {
       const tags = tagsOf(x.src);
@@ -452,7 +472,8 @@ export class BattlePanel extends ApplicationV2 {
       await setCustomBackground(target.layout, target.biome, src);
       return this.renderBackgrounds();
     }
-    this.draft = normalizeSetup({ ...this.draft, bgMode: "biblioteca", bgLib: src });
+    if ( target?.type === "table" ) this.draft = normalizeSetup({ ...this.draft, table: "biblioteca", tableLib: src });
+    else this.draft = normalizeSetup({ ...this.draft, bgMode: "biblioteca", bgLib: src });
     saveLastSetup(this.draft);
     this.renderNew();
   }
@@ -475,6 +496,10 @@ export class BattlePanel extends ApplicationV2 {
     if ( this.tab !== "nova" || !el.name ) return;
     const d = { ...this.draft };
     if ( el.name.startsWith("cardInfo.") ) d.cardInfo = { ...d.cardInfo, [el.name.slice(9)]: el.checked };
+    else if ( el.name === "introStyle" ) {
+      d.intro = el.value !== "nenhuma";
+      if ( d.intro ) d.introStyle = el.value;
+    }
     else d[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.type === "range" ? Number(el.value) : el.value;
     /* a whole token reads best with the strip under it, a generated card with the corner badges */
     if ( el.name === "cardMode" ) d.counters = el.value === "token" ? "faixa" : "cantos";
@@ -485,11 +510,21 @@ export class BattlePanel extends ApplicationV2 {
       this.root.querySelector(".bfu-preview").style.backgroundPosition = `50% ${Math.round(this.draft.bgFocus * 100)}%`;
       return;
     }
+    if ( el.name === "tableFocus" ) {
+      el.nextElementSibling.textContent = `${Math.round(this.draft.tableFocus * 100)}%`;
+      this.root.querySelector(".bfu-preview").style.backgroundPosition = `50% ${Math.round(this.draft.tableFocus * 100)}%`;
+      return;
+    }
     if ( el.type === "range" ) {
       el.nextElementSibling.textContent = `${this.draft.tokenScale.toFixed(1)}×`;
       return;
     }
-    if ( ["time", "table", "mana", "seed", "mat", "arrangement"].includes(el.name) ) this.renderPreview();
+    if ( el.name === "table" ) {
+      this.renderNew();
+      if ( el.value === "biblioteca" && !this.draft.tableLib ) this.openLibrary({ type: "table" });
+      return;
+    }
+    if ( ["time", "mana", "seed", "mat", "arrangement", "props"].includes(el.name) ) this.renderPreview();
     if ( ["cardMode", "counters"].includes(el.name) ) this.renderNew();
     if ( ["cardStyle", "cardDesign"].includes(el.name) ) this.renderCardPreview();
   }
@@ -669,9 +704,11 @@ export class BattlePanel extends ApplicationV2 {
       }
       case "start":
         return this.start();
-      case "replay":
-        await replayIntro();
-        return ui.notifications.info(`${MODULE_TITLE}: abertura enviada para todos.`);
+      case "replay": {
+        const kind = this.root.querySelector(".bfu-replaykind")?.value || null;
+        const played = await replayIntro(kind);
+        return ui.notifications.info(`${MODULE_TITLE}: abertura "${INTROS[played] ?? played}" enviada para todos.`);
+      }
       case "bannerParty":
       case "bannerFoes":
       case "bannerRound": {
@@ -707,6 +744,20 @@ export class BattlePanel extends ApplicationV2 {
         return ClimateApp.open();
       case "openLib":
         return this.openLibrary({ type: "setup" });
+      case "openTableLib":
+        return this.openLibrary({ type: "table" });
+      case "pickTableFile":
+        return browse({ type: "image", current: this.draft.tableLib, callback: path => {
+          this.draft = normalizeSetup({ ...this.draft, table: "biblioteca", tableLib: path });
+          saveLastSetup(this.draft);
+          this.renderNew();
+        } });
+      case "previewIntro": {
+        const scene = canvas?.scene;
+        if ( !isBattleScene(scene) ) return ui.notifications.info(`${MODULE_TITLE}: abra uma cena de batalha para ver a abertura (ela é desenhada sobre os tokens).`);
+        const { playIntro, pickIntro } = await import("./intro.mjs");
+        return playIntro(scene, pickIntro(this.draft.introStyle));
+      }
       case "clearLog":
         return this.renderEffects();
       default:
@@ -755,7 +806,8 @@ export class BattlePanel extends ApplicationV2 {
           <p>${combat ? (combat.started ? `Combate na rodada ${combat.round}.` : "Combate pronto, ainda não começou.") : "Sem combate (foi apagado)."}</p>
           <div class="bfu-btnrow">
             <button type="button" data-act="goto"><i class="fa-solid fa-eye"></i> Ver a cena</button>
-            <button type="button" data-act="replay"><i class="fa-solid fa-clone"></i> Rejogar abertura</button>
+            <span class="bfu-replay"><select class="bfu-replaykind" title="Qual abertura">${Object.entries(INTROS).map(([k, l]) => `<option value="${k}"${k === b.setup.introStyle ? " selected" : ""}>${escapeHTML(l)}</option>`).join("")}</select>
+            <button type="button" data-act="replay"><i class="fa-solid fa-clone"></i> Rejogar abertura</button></span>
             <button type="button" data-act="turns"><i class="fa-solid fa-hourglass-half"></i> Janela de turnos</button>
             <button type="button" data-act="climate"><i class="fa-solid fa-cloud-sun-rain"></i> Clima e mana…</button>
           </div>

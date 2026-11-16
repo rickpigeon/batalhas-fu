@@ -78,8 +78,8 @@ Hooks.once("ready", () => {
       add: (refs, side = "foes") => addToBattle(refs, side),
       /** End the running battle: { giveBack, back, deleteScene }. */
       end: opts => endBattle(opts),
-      /** Replay the card opening for everybody. */
-      intro: () => replayIntro(),
+      /** Replay the opening for everybody (kind: "cartas" | "versus" | "laminas" | "portal" | "cortinas" | "relampago" | "estilhacos" | "sorteada"). */
+      intro: kind => replayIntro(kind),
       /** Play an animation (GM): { kind, source, targets, element, style, ... }. */
       play: event => playEvent(event),
       /** Open the GM weather window. */

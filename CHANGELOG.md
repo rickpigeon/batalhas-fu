@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+- **Feno rolando** nos climas (grupo Vento e areia): bolas de feno que rolam e quicam pelo chão, com sombra e poeira ao cair, seguindo a direção do vento. Também entrou na combinação "Tormenta no deserto".
+- **Aberturas novas** além das cartas embaralhadas: versus, choque de lâminas, portal de mana (na cor da mana), cortinas de teatro, relâmpago, vidro estilhaçado e "sorteada a cada batalha". Escolha na Nova batalha (com prévia só na sua tela) e ao rejogar na Batalha atual; `api.intro(tipo)`.
+- **Mesa da biblioteca**: na mesa de cartas, o tampo pode ser uma imagem da biblioteca (ou qualquer imagem do servidor), com recorte ajustável, mantendo o pano, as marcações das cartas e os objetos por cima.
+- Opção **Objetos sobre a mesa** (caixa de mana, baralho, dados, velas e objetos do bioma) para qualquer mesa.
+
 ## 1.2.0
 
 Biblioteca de fundos:

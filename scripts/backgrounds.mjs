@@ -562,6 +562,9 @@ function rune(cx, cy, s, c, r) {
 function tableTop(table, seed, r) {
   let defs = "", body = "";
   switch ( table ) {
+    case "biblioteca":
+      /* the image from the library is painted underneath (battle.mjs) */
+      break;
     case "pedra":
       defs += `<filter id="bfStone" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="5" seed="${seed}" result="t"/>`
         + `<feDiffuseLighting in="t" surfaceScale="3" lighting-color="#ffffff" result="l"><feDistantLight azimuth="235" elevation="48"/></feDiffuseLighting>`
@@ -733,7 +736,7 @@ function manaBox(x, y, w, h, el, r) {
   return `${g}</g>`;
 }
 
-export function tableSVG({ biome = "planicie", table = "escura", mat = "bioma", arrangement = "linha", mana = "", seed = 1, slots = { party: [], foes: [] } } = {}) {
+export function tableSVG({ biome = "planicie", table = "escura", mat = "bioma", arrangement = "linha", mana = "", seed = 1, props = true, slots = { party: [], foes: [] } } = {}) {
   const r = rng(seed * 104729 + biome.length * 17);
   let defs = "";
   let body = "";
@@ -757,14 +760,15 @@ export function tableSVG({ biome = "planicie", table = "escura", mat = "bioma", 
   defs += `<radialGradient id="bfCandleGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffcf6b" stop-opacity=".55"/><stop offset="1" stop-color="#ffcf6b" stop-opacity="0"/></radialGradient>`;
   defs += `<radialGradient id="bfVelvet" cx="40%" cy="35%" r="80%"><stop offset="0" stop-color="#b0263a" stop-opacity=".7"/><stop offset="1" stop-color="#3a0510" stop-opacity=".8"/></radialGradient>`;
   defs += `<filter id="bfSoft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8"/></filter>`;
-  body += manaBox(36, 60, 230, 200, mana, r);
-  for ( let i = 0; i < 5; i++ ) body += cardBack(W - 150 + i * 3, 230 - i * 4, 150, 220, -8 + i * 2, "#3a1a4a", "#d9c27a");
-  body += cardBack(W - 170, 520, 150, 220, 14, "#3a1a4a", "#d9c27a");
-  body += die(W - 120, H - 300, 46, r() * 60, "#e8e2d4", 3 + Math.floor(r() * 8)) + die(W - 200, H - 210, 40, r() * 60, "#b02a3a", 3 + Math.floor(r() * 6));
-  body += candle(150, H - 170, 70) + candle(W - 140, H - 90, 55);
-
-  const deco = BIOME_PROPS[biome];
-  if ( deco ) body += deco(r);
+  if ( props ) {
+    body += manaBox(36, 60, 230, 200, mana, r);
+    for ( let i = 0; i < 5; i++ ) body += cardBack(W - 150 + i * 3, 230 - i * 4, 150, 220, -8 + i * 2, "#3a1a4a", "#d9c27a");
+    body += cardBack(W - 170, 520, 150, 220, 14, "#3a1a4a", "#d9c27a");
+    body += die(W - 120, H - 300, 46, r() * 60, "#e8e2d4", 3 + Math.floor(r() * 8)) + die(W - 200, H - 210, 40, r() * 60, "#b02a3a", 3 + Math.floor(r() * 6));
+    body += candle(150, H - 170, 70) + candle(W - 140, H - 90, 55);
+    const deco = BIOME_PROPS[biome];
+    if ( deco ) body += deco(r);
+  }
 
   const a = pm.area;
   const m = manaLayer(mana, r, { y0: a.my, y1: a.my + a.mh, cy: H / 2, ry: a.mh * 0.5 }, 0.4);

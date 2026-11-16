@@ -176,6 +176,14 @@ export async function toggleFavorite(src) {
   return fav.has(src);
 }
 
+/** Draw an image covering w x h, cropped at `focus` (0 = top/left, 1 = bottom/right). */
+export function drawCover(ctx, img, focus, w, h) {
+  const f = Math.max(0, Math.min(1, Number(focus) || 0));
+  const k = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+  const iw = img.naturalWidth * k, ih = img.naturalHeight * k;
+  ctx.drawImage(img, (w - iw) * (iw > w ? f : 0.5), (h - ih) * (ih > h ? f : 0.5), iw, ih);
+}
+
 /**
  * The battle background made from an image: cover-fit into 2400 x 1350, cropped at `focus`
  * (0 = top/left, 1 = bottom/right), overlay on top. Returns the uploaded path (cached).

@@ -6,7 +6,7 @@
  * Client: ambiente (biome particles on this screen).
  */
 import {
-  ARRANGEMENTS, BIOMES, CARD_DESIGNS, CARD_MODES, CARD_STYLES, COUNTER_POS, LAYOUTS, MATS, MODULE_ID, TABLES, TIMES, bool, num, pick, str
+  ARRANGEMENTS, BIOMES, CARD_DESIGNS, CARD_MODES, CARD_STYLES, COUNTER_POS, INTROS, LAYOUTS, MATS, MODULE_ID, TABLES, TIMES, bool, num, pick, str
 } from "./constants.mjs";
 import { WEATHER } from "./climate.mjs";
 
@@ -98,6 +98,7 @@ export const DEFAULT_SETUP = {
   mirrorParty: false,
   mirrorFoes: false,
   intro: true,
+  introStyle: "cartas",
   activate: true,
   startCombat: true,
   bgMode: "gerado",
@@ -110,7 +111,10 @@ export const DEFAULT_SETUP = {
   cardDesign: "moldura",
   counters: "cantos",
   cardInfo: { name: true, hp: true, mp: true, ip: true, status: true },
-  weather: ""
+  weather: "",
+  tableLib: "",
+  tableFocus: 0.5,
+  props: true
 };
 
 /** Which counters and labels go on the table cards. */
@@ -132,6 +136,7 @@ export function normalizeSetup(raw = {}) {
     mirrorParty: bool(o.mirrorParty, false),
     mirrorFoes: bool(o.mirrorFoes, false),
     intro: bool(o.intro, true),
+    introStyle: pick(o.introStyle, INTROS, DEFAULT_SETUP.introStyle),
     activate: bool(o.activate, true),
     startCombat: bool(o.startCombat, true),
     bgMode: o.bgMode === "biblioteca" ? "biblioteca" : "gerado",
@@ -144,7 +149,10 @@ export function normalizeSetup(raw = {}) {
     cardDesign: pick(o.cardDesign, CARD_DESIGNS, DEFAULT_SETUP.cardDesign),
     counters: pick(o.counters, COUNTER_POS, o.cardMode === "token" ? "faixa" : "cantos"),
     cardInfo: normalizeCardInfo(o.cardInfo),
-    weather: o.weather === "nenhum" || Object.prototype.hasOwnProperty.call(WEATHER, o.weather) ? o.weather : ""
+    weather: o.weather === "nenhum" || Object.prototype.hasOwnProperty.call(WEATHER, o.weather) ? o.weather : "",
+    tableLib: str(o.tableLib, "", 2000),
+    tableFocus: num(o.tableFocus, 0.5, 0, 1),
+    props: bool(o.props, true)
   };
 }
 

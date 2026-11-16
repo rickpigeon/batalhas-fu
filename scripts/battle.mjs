@@ -14,12 +14,13 @@ import { fieldSlots, tableCardSize, tableSlots } from "./layout.mjs";
 import { backgroundSVG } from "./backgrounds.mjs";
 import { battleCard, isCardImage } from "./cards.mjs";
 import { canvasToBlob, listFolder, loadImage, rootFolder, svgToCanvas, uploadBlob } from "./files.mjs";
+import { pickIntro } from "./intro.mjs";
 import {
   battleFlags, cachedBackground, customBackground, getBattle, normalizeCardInfo, normalizeSetup, rememberBackground, setBattle
 } from "./store.mjs";
 import { normalizeClimate, startingClimate } from "./climate.mjs";
 import { hideTurnMarker } from "./fx.mjs";
-import { fittedBackground } from "./library.mjs";
+import { drawCover, fittedBackground } from "./library.mjs";
 
 const SceneCls = () => foundry.documents?.Scene?.implementation ?? CONFIG.Scene.documentClass;
 const CombatCls = () => foundry.documents?.Combat?.implementation ?? CONFIG.Combat.documentClass;
@@ -57,8 +58,10 @@ export async function backgroundFor(setup, slots, onStatus = () => null) {
   if ( setup.bgMode === "biblioteca" && setup.bgLib ) return fittedBackground(setup.bgLib, setup.bgFocus, setup, onStatus);
   const custom = customBackground(setup.layout, setup.biome);
   if ( custom ) return fittedBackground(custom, setup.bgFocus, setup, onStatus);
+  /* a table image from the library: the mat, slots and props are painted over it */
+  const tableImage = setup.layout === "mesa" && setup.table === "biblioteca" && setup.tableLib ? setup.tableLib : "";
   const visual = setup.layout === "mesa"
-    ? { l: "mesa", b: setup.biome, t: setup.table, m: setup.mana, s: setup.seed, slots, mat: setup.mat, a: setup.arrangement, v: 2 }
+    ? { l: "mesa", b: setup.biome, t: setup.table, m: setup.mana, s: setup.seed, slots, mat: setup.mat, a: setup.arrangement, p: setup.props, ti: tableImage, tf: tableImage ? Math.round(setup.tableFocus * 100) : 0, v: 2 }
     : { l: "campo", b: setup.biome, t: setup.time, m: setup.mana, s: setup.seed, v: 1 };
   const key = hash(visual);
   const dir = `${rootFolder()}/fundos`;
@@ -66,8 +69,24 @@ export async function backgroundFor(setup, slots, onStatus = () => null) {
   const cached = cachedBackground(key);
   if ( cached && (await listFolder(dir)).has(name) ) return cached;
   onStatus("Pintando o fundo…");
-  const svg = backgroundSVG({ ...setup, slots }, 1);
-  const canvasEl = await svgToCanvas(svg, SCENE_W, SCENE_H);
+  const svg = backgroundSVG({ ...setup, table: setup.table === "biblioteca" && !tableImage ? "escura" : setup.table, slots }, 1);
+  let canvasEl = await svgToCanvas(svg, SCENE_W, SCENE_H);
+  if ( tableImage ) {
+    onStatus("Pondo a mesa da biblioteca…");
+    const under = document.createElement("canvas");
+    under.width = SCENE_W;
+    under.height = SCENE_H;
+    const ctx = under.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    try {
+      drawCover(ctx, await loadImage(tableImage), setup.tableFocus, SCENE_W, SCENE_H);
+    } catch ( err ) {
+      ui.notifications.warn(`${MODULE_TITLE}: não consegui abrir a imagem da mesa; usei a madeira escura.`);
+      ctx.drawImage(await svgToCanvas(backgroundSVG({ ...setup, table: "escura", slots }, 1), SCENE_W, SCENE_H), 0, 0);
+    }
+    ctx.drawImage(canvasEl, 0, 0);
+    canvasEl = under;
+  }
   const blob = await canvasToBlob(canvasEl, "image/webp", 0.88);
   onStatus("Enviando o fundo…");
   const path = await uploadBlob(blob, dir, name);
@@ -235,7 +254,7 @@ export async function startBattle({ setup: rawSetup, party: partyRefs, foes: foe
 
   await setBattle({ active: true, sceneId: scene.id, prevSceneId, combatId: combat.id, setup, sources, slots, startedAt: Date.now() });
 
-  if ( setup.intro ) await scene.setFlag(MODULE_ID, "intro", Number(game.time?.serverTime ?? Date.now()));
+  if ( setup.intro ) await scene.update({ flags: { [MODULE_ID]: { intro: Number(game.time?.serverTime ?? Date.now()), introKind: pickIntro(setup.introStyle) } } });
   onStatus("Levando todos para a batalha…");
   await onActivate();
   if ( setup.activate ) await scene.activate();
@@ -341,12 +360,14 @@ export async function endBattle({ giveBack = true, back = true, deleteScene = fa
   return { returned };
 }
 
-/** Replay the opening on every screen showing the battle. */
-export async function replayIntro() {
+/** Replay the opening on every screen showing the battle (kind: an opening, "sorteada", or the battle's own). */
+export async function replayIntro(kind = null) {
   const state = getBattle();
   const scene = game.scenes.get(state.sceneId) ?? canvas?.scene;
   if ( !scene ) return;
-  await scene.setFlag(MODULE_ID, "intro", Number(game.time?.serverTime ?? Date.now()));
+  const introKind = pickIntro(kind ?? state.setup.introStyle);
+  await scene.update({ flags: { [MODULE_ID]: { intro: Number(game.time?.serverTime ?? Date.now()), introKind } } });
+  return introKind;
 }
 
 /* ---------------------------------------------------------------------------------------------- */
